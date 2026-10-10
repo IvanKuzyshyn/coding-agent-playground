@@ -39,31 +39,12 @@ export async function login(_: ActionState, form: FormData): Promise<ActionState
     return { error: `API unreachable at ${api.API_URL}.` };
   }
   await setAuth({ token, name });
-  redirect("/sessions");
+  redirect("/");
 }
 
 export async function logout(): Promise<void> {
   await clearAuth();
   redirect("/login");
-}
-
-export async function createSession(_: ActionState, form: FormData): Promise<ActionState> {
-  const prompt = field(form, "prompt");
-  if (!prompt) return { error: "Prompt is required." };
-  const repo = field(form, "repo");
-  const preset = field(form, "preset");
-  let id = "";
-  const state = await attempt(async () => {
-    const s = await api.createSession({
-      harness: field(form, "harness"),
-      prompt,
-      ...(repo ? { repo } : {}),
-      ...(preset ? { preset } : {}),
-    });
-    id = s.id;
-  });
-  if (state.error) return state;
-  redirect(`/sessions/${id}`);
 }
 
 export async function followUp(_: ActionState, form: FormData): Promise<ActionState> {
@@ -74,7 +55,7 @@ export async function followUp(_: ActionState, form: FormData): Promise<ActionSt
     const t = await api.createTurn(id, prompt);
     return `Turn ${t.seq} ${t.status}.`;
   });
-  revalidatePath(`/sessions/${id}`);
+  revalidatePath("/");
   return state;
 }
 
@@ -84,7 +65,7 @@ export async function stopTurn(_: ActionState, form: FormData): Promise<ActionSt
     await api.stopTurn(id);
     return "Stop requested.";
   });
-  revalidatePath(`/sessions/${id}`);
+  revalidatePath("/");
   return state;
 }
 
@@ -94,6 +75,6 @@ export async function deleteSession(_: ActionState, form: FormData): Promise<Act
     await api.deleteSession(id);
     return "Session stopping.";
   });
-  revalidatePath(`/sessions/${id}`);
+  revalidatePath("/");
   return state;
 }

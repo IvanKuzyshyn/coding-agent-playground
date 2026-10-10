@@ -4,7 +4,7 @@ import { LoginForm } from "./login-form";
 
 export default async function LoginPage({ searchParams }: PageProps<"/login">) {
   const { expired } = await searchParams;
-  if (!expired && (await getAuth())) redirect("/sessions");
+  if (!expired && (await getAuth())) redirect("/");
   return (
     <main className="mx-auto flex min-h-screen max-w-sm flex-col justify-center px-4">
       <h1 className="mb-1 font-mono text-lg text-fg">terrarium</h1>

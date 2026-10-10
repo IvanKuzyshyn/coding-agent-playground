@@ -5,6 +5,12 @@ the HTTP API in `docs/contracts/api.md`: the browser talks only to this app; ser
 server actions and the SSE proxy route call the API with the engineer token, which lives only in an
 encrypted (`jose`, A256GCM), httpOnly, SameSite=Lax cookie.
 
+`/` is the runs list (stats tiles, search, filters, sort, pagination; all view state in the query
+string) and refreshes every 3 s via `router.refresh()`. `?session=<id>` opens a session in a
+right-side drawer. Sessions are created through the API only; the UI can send follow-ups, stop the
+running turn and delete a session. `/sessions` and `/sessions/<id>` redirect to `/` and
+`/?session=<id>`.
+
 ## Environment
 
 | Variable | Default | Purpose |
@@ -19,6 +25,8 @@ encrypted (`jose`, A256GCM), httpOnly, SameSite=Lax cookie.
 The mock (`mock/server.mjs`, no dependencies) implements the API contract in memory, including SSE,
 and simulates the session lifecycle with Claude- and Codex-shaped events and an egress denial.
 Login token: `dev-token` (`other-token` is a second engineer, for 404 checks). Cap: 3 active sessions.
+It starts with 64 finished sessions (some failed, some with unpriced models) and 3 live ones that
+fill the cap, one of them with a slow, long-running turn.
 
 ```sh
 npm install

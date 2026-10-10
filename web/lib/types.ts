@@ -9,6 +9,19 @@ export type SessionStatus =
   | "stopped"
   | "failed";
 
+// Like SessionStatus, but a session that ended because of an error stays "failed".
+export type DisplayStatus = SessionStatus;
+
+export const DISPLAY_STATUSES: DisplayStatus[] = [
+  "pending",
+  "provisioning",
+  "idle",
+  "running",
+  "stopping",
+  "stopped",
+  "failed",
+];
+
 export type TurnStatus =
   | "queued"
   | "running"
@@ -18,6 +31,8 @@ export type TurnStatus =
   | "limit_exceeded";
 
 export type Harness = "claude-code" | "codex";
+
+export const HARNESSES: Harness[] = ["claude-code", "codex"];
 
 export interface Usage {
   input_tokens: number;
@@ -41,13 +56,18 @@ export interface Turn {
 export interface Session {
   id: string;
   owner: string;
+  name: string;
   status: SessionStatus;
+  display_status: DisplayStatus;
   harness: Harness;
   preset: string;
   repo?: string;
   model?: string;
   tokens_used: number;
   token_budget: number;
+  cost_usd: number;
+  cost_complete: boolean;
+  duration_seconds: number;
   error?: string;
   created_at: string;
   updated_at: string;
@@ -70,8 +90,17 @@ export interface SessionEvent {
   ts: string;
 }
 
-export interface Preset {
-  name: string;
+export interface SessionList {
+  sessions: Session[];
+  total: number;
+}
+
+export interface Stats {
+  total: number;
+  running: number;
+  active: number;
+  failed: number;
+  failure_rate: number;
 }
 
 export interface EgressPayload {
