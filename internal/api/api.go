@@ -3,6 +3,7 @@
 package api
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -43,6 +44,8 @@ type Server struct {
 	// DenyNet is the sandbox network. The server is attached to it to reach sandboxd, so the API
 	// must refuse anything arriving from there.
 	DenyNet *net.IPNet
+	// WebURL is the web UI's base URL, for links returned over MCP.
+	WebURL string
 }
 
 func (s *Server) Handler() http.Handler {
@@ -62,6 +65,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 	})
+	mux.Handle("/mcp", s.mcpHandler())
 	mux.Handle("/", s.Engineers.middleware(authed))
 	return s.denySandboxes(mux)
 }
@@ -90,40 +94,59 @@ func (s *Server) presets(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"presets": out})
 }
 
+// clientError is a request the caller must fix; status is what the REST API answers with. The
+// REST and MCP surfaces share the operations below so their rules cannot drift apart.
+type clientError struct {
+	status int
+	msg    string
+}
+
+func (e *clientError) Error() string { return e.msg }
+
+func badRequest(msg string) error { return &clientError{http.StatusBadRequest, msg} }
+
+var errSessionNotFound = &clientError{http.StatusNotFound, "session not found"}
+
+type createRequest struct {
+	Name     string `json:"name"`
+	Harness  string `json:"harness"`
+	Prompt   string `json:"prompt"`
+	Repo     string `json:"repo"`
+	Preset   string `json:"preset"`
+	Model    string `json:"model"`
+	KeepIdle bool   `json:"keep_idle"`
+}
+
 func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Name     string `json:"name"`
-		Harness  string `json:"harness"`
-		Prompt   string `json:"prompt"`
-		Repo     string `json:"repo"`
-		Preset   string `json:"preset"`
-		Model    string `json:"model"`
-		KeepIdle bool   `json:"keep_idle"`
-	}
+	var req createRequest
 	if !decode(w, r, &req) {
 		return
 	}
+	id, err := s.create(r.Context(), owner(r.Context()), req)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	s.writeSession(w, r, id, http.StatusAccepted, false)
+}
+
+func (s *Server) create(ctx context.Context, who string, req createRequest) (uuid.UUID, error) {
 	req.Name = strings.Join(strings.Fields(req.Name), " ")
 	if req.Name == "" || utf8.RuneCountInString(req.Name) > maxNameRunes {
-		writeError(w, http.StatusBadRequest, fmt.Sprintf("name is required (1-%d characters)", maxNameRunes))
-		return
+		return uuid.Nil, badRequest(fmt.Sprintf("name is required (1-%d characters)", maxNameRunes))
 	}
 	if msg := validatePrompt(req.Prompt); msg != "" {
-		writeError(w, http.StatusBadRequest, msg)
-		return
+		return uuid.Nil, badRequest(msg)
 	}
 	if req.Repo != "" && !repoPattern.MatchString(req.Repo) {
-		writeError(w, http.StatusBadRequest, "repo must be owner/name")
-		return
+		return uuid.Nil, badRequest("repo must be owner/name")
 	}
 	spec, err := s.Catalog.Resolve(catalog.Request{Harness: req.Harness, Preset: req.Preset, Repo: req.Repo, Model: req.Model, KeepIdle: req.KeepIdle})
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
+		return uuid.Nil, badRequest(err.Error())
 	}
-	who := owner(r.Context())
 	id := uuid.New()
-	err = s.Store.CreateSession(r.Context(), store.NewSession{
+	err = s.Store.CreateSession(ctx, store.NewSession{
 		ID:                id,
 		Owner:             who,
 		Name:              req.Name,
@@ -135,14 +158,9 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 		MaxActive:         s.MaxActive,
 	})
 	if errors.Is(err, store.ErrLimit) {
-		writeError(w, http.StatusTooManyRequests, fmt.Sprintf("active session limit (%d) reached", s.MaxActive))
-		return
+		return uuid.Nil, &clientError{http.StatusTooManyRequests, fmt.Sprintf("active session limit (%d) reached", s.MaxActive)}
 	}
-	if err != nil {
-		s.internal(w, err)
-		return
-	}
-	s.writeSession(w, r, id, http.StatusAccepted, false)
+	return id, err
 }
 
 var (
@@ -247,12 +265,18 @@ func (s *Server) deleteSession(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	// The final status comes from the last finished turn (complete, failed or stopped).
-	if _, err := s.Store.EndSession(r.Context(), id, "", "deleted by "+owner(r.Context()), ""); err != nil {
+	if err := s.end(r.Context(), id, "deleted by "+owner(r.Context())); err != nil {
 		s.internal(w, err)
 		return
 	}
 	s.writeSession(w, r, id, http.StatusAccepted, false)
+}
+
+// end asks the supervisor to destroy the sandbox. The final status comes from the last finished
+// turn (complete, failed or stopped).
+func (s *Server) end(ctx context.Context, id uuid.UUID, reason string) error {
+	_, err := s.Store.EndSession(ctx, id, "", reason, "")
+	return err
 }
 
 func (s *Server) createTurn(w http.ResponseWriter, r *http.Request) {
@@ -266,20 +290,23 @@ func (s *Server) createTurn(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &req) {
 		return
 	}
-	if msg := validatePrompt(req.Prompt); msg != "" {
-		writeError(w, http.StatusBadRequest, msg)
-		return
-	}
-	t, err := s.Store.EnqueueTurn(r.Context(), id, req.Prompt)
-	if errors.Is(err, store.ErrConflict) {
-		writeError(w, http.StatusConflict, "session is not accepting turns")
-		return
-	}
+	t, err := s.enqueue(r.Context(), id, req.Prompt)
 	if err != nil {
-		s.internal(w, err)
+		s.fail(w, err)
 		return
 	}
 	writeJSON(w, http.StatusAccepted, toTurnJSON(t))
+}
+
+func (s *Server) enqueue(ctx context.Context, id uuid.UUID, prompt string) (store.Turn, error) {
+	if msg := validatePrompt(prompt); msg != "" {
+		return store.Turn{}, badRequest(msg)
+	}
+	t, err := s.Store.EnqueueTurn(ctx, id, prompt)
+	if errors.Is(err, store.ErrConflict) {
+		return t, &clientError{http.StatusConflict, "session is not accepting turns"}
+	}
+	return t, err
 }
 
 func (s *Server) stopTurn(w http.ResponseWriter, r *http.Request) {
@@ -301,21 +328,24 @@ func (s *Server) stopTurn(w http.ResponseWriter, r *http.Request) {
 
 // ownedID parses the path id and hides sessions owned by someone else behind a 404.
 func (s *Server) ownedID(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
-	id, err := uuid.Parse(r.PathValue("id"))
+	ss, err := s.owned(r.Context(), owner(r.Context()), r.PathValue("id"))
 	if err != nil {
-		writeError(w, http.StatusNotFound, "session not found")
-		return id, false
+		s.fail(w, err)
+		return uuid.Nil, false
 	}
-	ss, err := s.Store.GetSession(r.Context(), id)
-	if errors.Is(err, store.ErrNotFound) || (err == nil && ss.Owner != owner(r.Context())) {
-		writeError(w, http.StatusNotFound, "session not found")
-		return id, false
-	}
+	return ss.ID, true
+}
+
+func (s *Server) owned(ctx context.Context, who, rawID string) (store.Session, error) {
+	id, err := uuid.Parse(rawID)
 	if err != nil {
-		s.internal(w, err)
-		return id, false
+		return store.Session{}, errSessionNotFound
 	}
-	return id, true
+	ss, err := s.Store.GetSession(ctx, id)
+	if errors.Is(err, store.ErrNotFound) || (err == nil && ss.Owner != who) {
+		return store.Session{}, errSessionNotFound
+	}
+	return ss, err
 }
 
 func (s *Server) writeSession(w http.ResponseWriter, r *http.Request, id uuid.UUID, status int, withTurns bool) {
@@ -332,6 +362,16 @@ func (s *Server) writeSession(w http.ResponseWriter, r *http.Request, id uuid.UU
 		}
 	}
 	writeJSON(w, status, toSessionJSON(ss, turns))
+}
+
+// fail answers a clientError with its status and anything else as a logged 500.
+func (s *Server) fail(w http.ResponseWriter, err error) {
+	var ce *clientError
+	if errors.As(err, &ce) {
+		writeError(w, ce.status, ce.msg)
+		return
+	}
+	s.internal(w, err)
 }
 
 func (s *Server) internal(w http.ResponseWriter, err error) {

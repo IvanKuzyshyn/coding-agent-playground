@@ -73,7 +73,7 @@ func runServer(ctx context.Context) error {
 		Handler: (&api.Server{
 			Store: st, Catalog: cat, Engineers: engineers, SessionKey: key,
 			MaxActive: cfg.MaxActiveSessionsPerOwner, Log: log, EventPoll: 500 * time.Millisecond,
-			DenyNet: sandboxNet,
+			DenyNet: sandboxNet, WebURL: cfg.WebURL,
 		}).Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}

@@ -18,6 +18,8 @@ type Server struct {
 	GatewayURL string `env:"TERRARIUM_GATEWAY_URL" envDefault:"http://gateway:8080"`
 	// host:port of the gateway's CONNECT proxy as seen from a sandbox.
 	GatewayProxy string `env:"TERRARIUM_GATEWAY_PROXY" envDefault:"gateway:3128"`
+	// Web UI base URL as the engineer reaches it, for session links returned over MCP.
+	WebURL string `env:"TERRARIUM_WEB_URL" envDefault:"http://127.0.0.1:3000"`
 	// Commit identity for work agents push to GitHub; empty leaves git's default.
 	GitUserName  string `env:"TERRARIUM_GIT_USER_NAME"`
 	GitUserEmail string `env:"TERRARIUM_GIT_USER_EMAIL"`
