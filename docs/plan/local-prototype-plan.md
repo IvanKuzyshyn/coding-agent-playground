@@ -349,11 +349,12 @@ host keychain or password manager at `make up`.
 
 ### 6.1 Agent image
 
-- `node:22-bookworm` + git, curl, jq, ripgrep, gh, Python. Pinned Claude Code and Codex versions.
-- Non-root user `agent`. `ENTRYPOINT ["sandboxd"]`.
+- `node:24-bookworm-slim` + git, curl, jq, ripgrep, Python. Pinned Claude Code 2.1.296 and Codex
+  0.162.1 (see `docs/contracts/sandboxd.md`).
+- Non-root user `agent` (uid 1000). `ENTRYPOINT ["sandboxd"]`; sandboxd reaps orphans when PID 1.
 - Container options: `--cap-drop ALL`, `--security-opt no-new-privileges`, `--pids-limit`, CPU and
-  memory limits, `--read-only` root with tmpfs `/tmp` and a writable `/workspace` volume per session.
-  No Docker socket, no host mounts.
+  memory limits, `--read-only` root with tmpfs `/tmp` and a per-session volume at `/home/agent`
+  (workspace in `/home/agent/work`). No Docker socket, no host mounts.
 
 ### 6.2 sandboxd API
 

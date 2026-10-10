@@ -60,7 +60,7 @@ The platform does not try to detect injection; it limits what an injected agent 
 |---|---|---|
 | Nothing to steal in the sandbox (placeholders only) | Demonstrated | `docker export` of a live sandbox and `docker inspect`: 0 matches for the real token (spikes S1/S2 and the full stack) |
 | Default-deny egress | Demonstrated | Agent asked to `curl https://example.com`: CONNECT `403`, recorded as egress event `denied`; with `--noproxy`: DNS fails |
-| Egress decisions visible to the engineer | Demonstrated | `GET /sessions/{id}/events?kind=egress`, web UI Egress panel |
+| Egress decisions visible to the engineer | Demonstrated | `GET /sessions/{id}/events?kind=egress`, web UI Egress panel (verified in a headless browser against the real stack). Codex's routine auxiliary calls are denied without an event so real attempts stand out |
 | Per-session token budget and step cap | Demonstrated (unit + integration tests) | Gateway `429` after budget; supervisor ends the turn `limit_exceeded`; Claude `--max-turns` |
 | Agent cannot widen its own permissions | Demonstrated | Spec frozen at creation; gateway and supervisor read only the frozen spec |
 | Tool-level deny rules (e.g. WebFetch) | Demonstrated | `/etc/claude-code/managed-settings.json` in the image |
@@ -110,6 +110,7 @@ work), not a bill. `total_cost_usd` from Claude is an estimate, not billing.
 | Session TTL and idle timeout, enforced by the supervisor | Demonstrated (supervisor tests) |
 | Max active sessions per engineer (`429`) | Demonstrated |
 | Per-turn usage visible in API and UI | Demonstrated |
+| Vendor quota exhaustion surfaced, session stays usable | Demonstrated (live: ChatGPT Plus limit reached → turn `failed` with the vendor's message, session back to `idle`) |
 | Per-engineer weekly budget, alerts | Design |
 
 ## 4. Permission modes
