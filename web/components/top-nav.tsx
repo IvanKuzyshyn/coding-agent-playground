@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Logo } from "@/components/logo";
 import { UserMenu } from "@/components/user-menu";
 
 const LINKS = [
@@ -11,11 +12,7 @@ export function TopNav({ user, active = "runs" }: { user: string; active?: (type
     <header className="sticky top-0 z-20 border-b border-line bg-bg/95 backdrop-blur">
       <div className="flex h-12 items-center gap-4 px-3 sm:px-6">
         <Link href="/" className="flex items-center gap-2 text-sm font-semibold text-fg">
-          <svg viewBox="0 0 20 20" width="20" height="20" fill="none" aria-hidden className="text-emerald-400">
-            <rect x="2.5" y="5.5" width="15" height="12" rx="2" stroke="currentColor" strokeWidth="1.3" />
-            <path d="M10 15V9.5M10 11c0-2 1.6-3.2 3.5-3.2 0 2-1.6 3.2-3.5 3.2ZM10 12.2c0-1.6-1.2-2.6-2.8-2.6 0 1.6 1.2 2.6 2.8 2.6Z" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
-            <path d="M5 2.5h10" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
-          </svg>
+          <Logo size={22} />
           Terrarium
         </Link>
         <nav aria-label="Main" className="flex items-center gap-1">
