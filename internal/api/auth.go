@@ -2,62 +2,107 @@ package api
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
-	"fmt"
+	"errors"
+	"net"
 	"net/http"
-	"os"
+	"regexp"
+	"slices"
 	"strings"
 
-	"gopkg.in/yaml.v3"
+	"github.com/modelcontextprotocol/go-sdk/auth"
+
+	"terrarium/internal/credentials"
+	"terrarium/internal/store"
 )
 
-// Engineers maps sha256(token) to an engineer name. Only hashes are stored on disk.
-type Engineers map[string]string
-
-func LoadEngineers(path string) (Engineers, error) {
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	var f struct {
-		Engineers []struct {
-			Name        string `yaml:"name"`
-			TokenSHA256 string `yaml:"token_sha256"`
-		} `yaml:"engineers"`
-	}
-	if err := yaml.Unmarshal(b, &f); err != nil {
-		return nil, fmt.Errorf("parse %s: %w", path, err)
-	}
-	out := Engineers{}
-	for _, e := range f.Engineers {
-		h := strings.ToLower(strings.TrimSpace(e.TokenSHA256))
-		if e.Name == "" || len(h) != 64 {
-			return nil, fmt.Errorf("%s: invalid entry for %q", path, e.Name)
-		}
-		out[h] = e.Name
-	}
-	return out, nil
-}
+var userNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,38}$`)
 
 type ctxKey struct{}
 
 func owner(ctx context.Context) string { return ctx.Value(ctxKey{}).(string) }
 
-func (e Engineers) middleware(next http.Handler) http.Handler {
+// userForToken resolves an API token to its user. Only the token's hash is stored.
+func (s *Server) userForToken(ctx context.Context, token string) (string, error) {
+	return s.Store.UserByTokenHash(ctx, credentials.Hash(token))
+}
+
+func (s *Server) middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		token, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
 		if !ok || token == "" {
 			writeError(w, http.StatusUnauthorized, "missing bearer token")
 			return
 		}
-		// Map lookup on the hash: the comparison never touches the token itself.
-		sum := sha256.Sum256([]byte(token))
-		name, ok := e[hex.EncodeToString(sum[:])]
-		if !ok {
+		name, err := s.userForToken(r.Context(), token)
+		if errors.Is(err, store.ErrNotFound) {
 			writeError(w, http.StatusUnauthorized, "invalid token")
+			return
+		}
+		if err != nil {
+			s.internal(w, err)
 			return
 		}
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), ctxKey{}, name)))
 	})
+}
+
+// verifyMCP is the MCP form of the same token check.
+func (s *Server) verifyMCP(ctx context.Context, token string, _ *http.Request) (*auth.TokenInfo, error) {
+	name, err := s.userForToken(ctx, token)
+	if errors.Is(err, store.ErrNotFound) {
+		return nil, auth.ErrInvalidToken
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &auth.TokenInfo{UserID: name}, nil
+}
+
+// login creates the user on first use and returns their API token. There is no password, so it
+// is only served to requests addressed to an allowed host (default: localhost).
+func (s *Server) login(w http.ResponseWriter, r *http.Request) {
+	if !s.loginHostAllowed(r) {
+		writeError(w, http.StatusForbidden, "login is only allowed from "+strings.Join(s.LoginHosts, ", "))
+		return
+	}
+	var req struct {
+		Name string `json:"name"`
+	}
+	if !decode(w, r, &req) {
+		return
+	}
+	name := strings.ToLower(strings.TrimSpace(req.Name))
+	if !userNamePattern.MatchString(name) {
+		writeError(w, http.StatusBadRequest, "name must be 1-39 characters: a-z, 0-9, '.', '_' or '-', starting with a letter or digit")
+		return
+	}
+	token := credentials.UserToken(s.SessionKey, name)
+	created, err := s.Store.EnsureUser(r.Context(), name, credentials.Hash(token))
+	if err != nil {
+		s.internal(w, err)
+		return
+	}
+	if created {
+		s.Log.Info("user created", "name", name)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"name": name, "token": token, "created": created})
+}
+
+// loginHostAllowed checks the host the user addressed: X-Forwarded-Host when the web UI forwards
+// a browser login, otherwise Host. "localhost" also covers the loopback addresses.
+func (s *Server) loginHostAllowed(r *http.Request) bool {
+	host := r.Header.Get("X-Forwarded-Host")
+	if host == "" {
+		host = r.Host
+	}
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	host = strings.ToLower(strings.Trim(host, "[]"))
+	for _, allowed := range s.LoginHosts {
+		if host == allowed || (allowed == "localhost" && slices.Contains([]string{"127.0.0.1", "::1"}, host)) {
+			return true
+		}
+	}
+	return false
 }

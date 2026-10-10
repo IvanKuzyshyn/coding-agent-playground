@@ -19,5 +19,3 @@ web/out/
 # Spike-generated placeholder credentials
 spikes/*/.generated/
 
-# Engineer token hashes (local)
-config/engineers.yaml

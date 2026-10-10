@@ -130,3 +130,11 @@ func DeriveSecret(key []byte, sessionID string) string {
 	m.Write([]byte("gateway-secret:" + sessionID))
 	return hex.EncodeToString(m.Sum(nil))
 }
+
+// UserToken is a user's API token, derived from the server key so it can be shown again at any
+// login while the database stores only its hash.
+func UserToken(key []byte, name string) string {
+	m := hmac.New(sha256.New, key)
+	m.Write([]byte("user-token:" + name))
+	return "trm_" + hex.EncodeToString(m.Sum(nil))
+}

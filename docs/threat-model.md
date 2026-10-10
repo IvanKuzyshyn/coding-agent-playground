@@ -13,7 +13,7 @@ architecture.
 | Codex ChatGPT login (access + refresh token) | Gateway container only (`~/.terrarium/codex`, a login dedicated to the gateway) | Sandboxes, logs, the database |
 | Engineer's GitHub token | Gateway container only (compose secret from the host keychain, `make credentials`) | Sandboxes, logs, the database |
 | Session key (derives per-session gateway secrets) | Server container only (compose secret) | Sandboxes, gateway, database |
-| Engineer API tokens | Engineer's device; server stores sha256 only; web UI keeps it in an encrypted httpOnly cookie | Browser JS, other engineers |
+| User API tokens | Derived from the server's session key (HMAC of the user name); the database stores sha256 only; the web UI keeps it in an encrypted httpOnly cookie | Browser JS, other engineers |
 | Subscription quota | Upstream vendors | Runaway or hijacked agents |
 | Engineer's code and repos | Sandbox workspace volume (deleted with the session) | Other sessions, the internet |
 
@@ -81,7 +81,8 @@ The platform does not try to detect injection; it limits what an injected agent 
 | Read real tokens from logs | Gateway logs header names only | Demonstrated (log grep: 0 matches) |
 | Codex refresh-token rotation conflict / theft | Gateway is the only refresher of a dedicated login; Codex in the sandbox has fake refresh tokens answered by the gateway | Demonstrated in spike S2; refresh logic unit-tested |
 | A prompt-injected agent that holds an engineer token over MCP | Same power as the token over REST: creates and ends that engineer's sessions, bounded by the active-session cap and per-session budgets. Sandboxes cannot reach `/mcp` (sandbox subnet refused) | Residual. Claude Code stores the token in its config when added with `--header`; Codex reads it from an env var. Later: scoped tokens per MCP client |
-| Steal engineer API token from the browser | httpOnly encrypted cookie; browser never sees the token | Demonstrated (UI e2e scanned all responses) |
+| Log in as someone else | Login is by name only (no password); `POST /login` answers only for hosts in `TERRARIUM_LOGIN_ALLOWED_HOSTS` (default `localhost`) and the ports bind to 127.0.0.1 | **Residual.** Anyone with access to the machine can act as any user. Exposing the UI to other hosts needs real authentication first |
+| Steal engineer API token from the browser | httpOnly encrypted cookie; pages never contain the token, the browser receives it only from `/api/token` when the user clicks a copy action | Demonstrated (UI e2e scanned all responses) |
 | Compromise of the host or Docker socket | Server holds the Docker socket (root-equivalent) | Accepted locally. Design: replace with a sandbox runtime API (Kata/Firecracker) with scoped credentials |
 
 ### 3.3 Exfiltration
@@ -148,8 +149,7 @@ uid 1000.
 3. Docker containers share the host kernel.
 4. Allowlisted hosts can receive exfiltrated data.
 5. The gateway's Claude credential use sits close to Anthropic's terms (§5).
-6. No TLS between components on the local machine; the web UI is plain HTTP on localhost (use
-   `tailscale serve` for HTTPS from other devices).
+6. No TLS between components on the local machine; the web UI is plain HTTP on localhost.
 7. The per-session home volume has no disk quota (Docker Desktop volumes do not support size
    limits); one agent can fill the Docker VM disk. Real setup: XFS project quotas or a sized
    block volume per sandbox.
@@ -157,3 +157,5 @@ uid 1000.
 9. The GitHub token is the engineer's `gh` OAuth token (`repo` scope on every repository they can
    reach). The gateway narrows use to one repository and branch prefix, but a gateway compromise
    exposes the full token. Real setup: a GitHub App user-to-server token per engineer.
+10. Login has no password; anyone who can reach the UI on an allowed host can act as any user
+    (localhost only by default).

@@ -15,7 +15,7 @@ import (
 // including on unauthenticated endpoints.
 func TestRequestsFromSandboxNetworkAreRefused(t *testing.T) {
 	_, sandboxNet, _ := net.ParseCIDR("172.31.250.0/24")
-	h := (&api.Server{Engineers: api.Engineers{}, DenyNet: sandboxNet}).Handler()
+	h := (&api.Server{DenyNet: sandboxNet}).Handler()
 	for addr, want := range map[string]int{
 		"172.31.250.7:51000": http.StatusForbidden,
 		"127.0.0.1:51000":    http.StatusOK,

@@ -4,10 +4,12 @@ package config
 import "github.com/caarlos0/env/v11"
 
 type Server struct {
-	DatabaseURL   string `env:"DATABASE_URL,required"`
-	Addr          string `env:"TERRARIUM_ADDR" envDefault:":8080"`
-	EngineersFile string `env:"TERRARIUM_ENGINEERS_FILE" envDefault:"/etc/terrarium/engineers.yaml"`
-	PresetsFile   string `env:"TERRARIUM_PRESETS_FILE" envDefault:"/etc/terrarium/presets.yaml"`
+	DatabaseURL string `env:"DATABASE_URL,required"`
+	Addr        string `env:"TERRARIUM_ADDR" envDefault:":8080"`
+	PresetsFile string `env:"TERRARIUM_PRESETS_FILE" envDefault:"/etc/terrarium/presets.yaml"`
+	// Host names login is served on. Login has no password, so it stays on localhost unless
+	// deliberately widened (comma-separated; "localhost" includes the loopback addresses).
+	LoginAllowedHosts []string `env:"TERRARIUM_LOGIN_ALLOWED_HOSTS" envDefault:"localhost" envSeparator:","`
 	// Docker network the sandboxes join. Internal: no route to the internet.
 	SandboxNetwork string `env:"TERRARIUM_SANDBOX_NETWORK" envDefault:"terrarium-sandbox"`
 	// The server joins the sandbox network to reach sandboxd; requests from it are refused.

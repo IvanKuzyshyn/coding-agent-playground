@@ -4,7 +4,7 @@ CLAUDE_TOKEN = $$(security find-generic-password -a "$$USER" -s terrarium-claude
 GITHUB_TOKEN = $$(security find-generic-password -a "$$USER" -s terrarium-github -w 2>/dev/null)
 CODEX_HOME_DIR := $(HOME)/.terrarium/codex
 
-.PHONY: up deps-up down reset migrate logs ps build test vet image-agent token codex-login credentials
+.PHONY: up deps-up down reset migrate logs ps build test vet image-agent codex-login credentials
 
 up: image-agent ## Start postgres, server, gateway and web UI
 	@mkdir -p $(CODEX_HOME_DIR)
@@ -48,13 +48,6 @@ test:
 
 image-agent: ## Build the sandbox image
 	docker build -t terrarium-agent:local -f images/agent/Dockerfile .
-
-token: ## Create an engineer API token: make token NAME=alice
-	@test -n "$(NAME)" || (echo "usage: make token NAME=<engineer>" && exit 1)
-	@test -f config/engineers.yaml || printf 'engineers:\n' > config/engineers.yaml
-	@tok=$$(openssl rand -hex 32); \
-	 printf '  - name: %s\n    token_sha256: %s\n' "$(NAME)" "$$(printf %s "$$tok" | shasum -a 256 | cut -d' ' -f1)" >> config/engineers.yaml; \
-	 echo "API token for $(NAME) (shown once): $$tok"
 
 codex-login: ## Log in to ChatGPT for the gateway's own Codex credential (separate from ~/.codex)
 	@mkdir -p $(CODEX_HOME_DIR)

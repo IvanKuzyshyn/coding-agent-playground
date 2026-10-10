@@ -1,8 +1,10 @@
 "use client";
 
 import { useState } from "react";
+import { copyWithToken } from "@/lib/token";
 
-export function CopyBlock({ text, label }: { text: string; label: string }) {
+// withToken: text shows TOKEN_MASK; the copy carries the real token, fetched only on click.
+export function CopyBlock({ text, label, withToken = false }: { text: string; label: string; withToken?: boolean }) {
   const [copied, setCopied] = useState(false);
   return (
     <div className="relative rounded-md border border-line bg-panel2">
@@ -11,7 +13,7 @@ export function CopyBlock({ text, label }: { text: string; label: string }) {
         type="button"
         aria-label={`Copy ${label}`}
         onClick={async () => {
-          await navigator.clipboard.writeText(text);
+          await (withToken ? copyWithToken(text) : navigator.clipboard.writeText(text));
           setCopied(true);
           setTimeout(() => setCopied(false), 1500);
         }}

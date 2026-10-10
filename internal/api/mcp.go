@@ -2,8 +2,6 @@ package api
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -81,17 +79,7 @@ func (s *Server) mcpHandler() http.Handler {
 
 	h := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return srv },
 		&mcp.StreamableHTTPOptions{Stateless: true, JSONResponse: true})
-	return auth.RequireBearerToken(s.Engineers.verifyMCP, &auth.RequireBearerTokenOptions{AllowMissingExpiration: true})(h)
-}
-
-// verifyMCP maps the engineer API token to the engineer, the same check as the REST middleware.
-func (e Engineers) verifyMCP(_ context.Context, token string, _ *http.Request) (*auth.TokenInfo, error) {
-	sum := sha256.Sum256([]byte(token))
-	name, ok := e[hex.EncodeToString(sum[:])]
-	if !ok {
-		return nil, auth.ErrInvalidToken
-	}
-	return &auth.TokenInfo{UserID: name}, nil
+	return auth.RequireBearerToken(s.verifyMCP, &auth.RequireBearerTokenOptions{AllowMissingExpiration: true})(h)
 }
 
 func mcpOwner(req *mcp.CallToolRequest) string { return req.Extra.TokenInfo.UserID }

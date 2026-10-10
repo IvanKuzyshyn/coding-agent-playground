@@ -42,9 +42,6 @@ subscription, and the `claude` and `codex` CLIs on the host (for the one-time lo
 # Claude token and GitHub token -> macOS keychain; Codex login -> ~/.terrarium/codex
 # (separate from ~/.codex). Pick the tools, then follow each login.
 make credentials
-
-# Engineer API token (printed once)
-make token NAME=alice
 ```
 
 ## Run
@@ -53,15 +50,17 @@ make token NAME=alice
 make up        # builds images, applies migrations, starts postgres, server, gateway, web
 ```
 
-- Web UI: http://127.0.0.1:3000 (log in with the engineer token)
-- API: http://127.0.0.1:8080 (`Authorization: Bearer <token>`), see `docs/contracts/api.md`
-- From another device: expose the UI over a private network, e.g. `tailscale serve 3000` (HTTPS).
-  Never publish the ports on a public interface.
+- Web UI: http://127.0.0.1:3000. Log in with a user name; a new name creates the user. The user
+  menu (top right) copies your API token.
+- API: http://127.0.0.1:8080 (`Authorization: Bearer <token>`), see `docs/contracts/api.md`. A
+  token is also returned by `curl -s -XPOST localhost:8080/login -d '{"name":"alice"}'`.
+- Login has no password, so it only works on `localhost` (`TERRARIUM_LOGIN_ALLOWED_HOSTS`, a
+  comma-separated list for the server). Never publish the ports on a public interface.
 
 ## Demo script (API)
 
 ```bash
-T=<engineer token>; H="Authorization: Bearer $T"
+T=$(curl -s -XPOST localhost:8080/login -d '{"name":"alice"}' | jq -r .token); H="Authorization: Bearer $T"
 # start a session on a public repo
 ID=$(curl -s -XPOST localhost:8080/sessions -H "$H" \
   -d '{"name":"explore hello world","harness":"claude-code","repo":"octocat/Hello-World","prompt":"What is this repo?"}' | jq -r .id)
@@ -83,13 +82,7 @@ curl -s -XPOST localhost:8080/sessions -H "$H" \
 
 Terrarium is also an MCP server at `http://127.0.0.1:8080/mcp` with tools to list presets, create,
 wait for, inspect, follow up and terminate sessions (`docs/contracts/mcp.md`). The web UI's **MCP**
-page has copy-paste setup; for Claude Code:
-
-```bash
-export TERRARIUM_TOKEN=<engineer token>
-claude mcp add --transport http --scope user terrarium http://127.0.0.1:8080/mcp \
-  --header "Authorization: Bearer $TERRARIUM_TOKEN"
-```
+page has copy-paste setup commands with your token filled in (shown masked, copied in full).
 
 ## Tests
 

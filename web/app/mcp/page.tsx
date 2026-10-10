@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { CopyBlock } from "@/components/copy-block";
 import { TopNav } from "@/components/top-nav";
 import { requireAuth } from "@/lib/auth";
+import { TOKEN_MASK } from "@/lib/token";
 
 // The API as the engineer's machine reaches it (the web server itself uses the in-network URL).
 const PUBLIC_API_URL = process.env.TERRARIUM_PUBLIC_API_URL ?? "http://127.0.0.1:8080";
@@ -19,10 +20,10 @@ const TOOLS: [string, string][] = [
 export default async function McpPage() {
   const { name } = await requireAuth();
   const url = `${PUBLIC_API_URL}/mcp`;
-  const claude = `claude mcp add --transport http --scope user terrarium ${url} \\\n  --header "Authorization: Bearer $TERRARIUM_TOKEN"`;
-  const codex = `codex mcp add terrarium --url ${url} \\\n  --bearer-token-env-var TERRARIUM_TOKEN`;
+  const claude = `claude mcp add --transport http --scope user terrarium ${url} \\\n  --header "Authorization: Bearer ${TOKEN_MASK}"`;
+  const codex = `export TERRARIUM_TOKEN=${TOKEN_MASK}\ncodex mcp add terrarium --url ${url} \\\n  --bearer-token-env-var TERRARIUM_TOKEN`;
   const json = JSON.stringify(
-    { mcpServers: { terrarium: { type: "http", url, headers: { Authorization: "Bearer <your token>" } } } },
+    { mcpServers: { terrarium: { type: "http", url, headers: { Authorization: `Bearer ${TOKEN_MASK}` } } } },
     null,
     2,
   );
@@ -43,26 +44,23 @@ export default async function McpPage() {
           <CopyBlock label="endpoint" text={url} />
         </Step>
 
-        <Step n={2} title="Token">
+        <Step n={2} title="Add it to your agent">
           <p className="text-sm text-muted">
-            Use your engineer API token (the one you log in with). Create another with{" "}
-            <code className="font-mono text-fg">make token NAME=&lt;you&gt;</code>.
+            The commands include your API token, hidden here; Copy puts the real token on the clipboard.
           </p>
-          <CopyBlock label="export command" text={"export TERRARIUM_TOKEN=<your token>"} />
-        </Step>
-
-        <Step n={3} title="Add it to your agent">
-          <h3 className="text-xs font-medium tracking-widest text-muted uppercase">Claude Code</h3>
-          <CopyBlock label="Claude Code command" text={claude} />
-          <p className="text-xs text-muted">The shell expands the token now; Claude Code stores it in its config.</p>
+          <h3 className="pt-1 text-xs font-medium tracking-widest text-muted uppercase">Claude Code</h3>
+          <CopyBlock label="Claude Code command" text={claude} withToken />
+          <p className="text-xs text-muted">Claude Code stores the token in its config.</p>
           <h3 className="pt-2 text-xs font-medium tracking-widest text-muted uppercase">Codex</h3>
-          <CopyBlock label="Codex command" text={codex} />
-          <p className="text-xs text-muted">Codex reads the token from TERRARIUM_TOKEN each time it starts.</p>
+          <CopyBlock label="Codex command" text={codex} withToken />
+          <p className="text-xs text-muted">
+            Codex reads the token from TERRARIUM_TOKEN when it starts; keep the export in your shell profile.
+          </p>
           <h3 className="pt-2 text-xs font-medium tracking-widest text-muted uppercase">Other clients (JSON)</h3>
-          <CopyBlock label="JSON config" text={json} />
+          <CopyBlock label="JSON config" text={json} withToken />
         </Step>
 
-        <Step n={4} title="Tools">
+        <Step n={3} title="Tools">
           <ul className="divide-y divide-line rounded-md border border-line bg-panel">
             {TOOLS.map(([tool, desc]) => (
               <li key={tool} className="flex flex-wrap gap-x-3 px-3 py-2 text-sm">
@@ -73,7 +71,7 @@ export default async function McpPage() {
           </ul>
         </Step>
 
-        <Step n={5} title="Try it">
+        <Step n={4} title="Try it">
           <CopyBlock
             label="example prompt"
             text="Use terrarium to run a codex session on octocat/Hello-World that explains the repository, wait for it, and summarise the result."

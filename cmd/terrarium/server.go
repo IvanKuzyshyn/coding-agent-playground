@@ -44,10 +44,6 @@ func runServer(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	engineers, err := api.LoadEngineers(cfg.EngineersFile)
-	if err != nil {
-		return err
-	}
 	st, err := store.Open(ctx, cfg.DatabaseURL)
 	if err != nil {
 		return err
@@ -71,7 +67,7 @@ func runServer(ctx context.Context) error {
 	srv := &http.Server{
 		Addr: cfg.Addr,
 		Handler: (&api.Server{
-			Store: st, Catalog: cat, Engineers: engineers, SessionKey: key,
+			Store: st, Catalog: cat, SessionKey: key, LoginHosts: cfg.LoginAllowedHosts,
 			MaxActive: cfg.MaxActiveSessionsPerOwner, Log: log, EventPoll: 500 * time.Millisecond,
 			DenyNet: sandboxNet, WebURL: cfg.WebURL,
 		}).Handler(),

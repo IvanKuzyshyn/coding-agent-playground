@@ -4,8 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -20,6 +18,7 @@ import (
 
 	"terrarium/internal/api"
 	"terrarium/internal/catalog"
+	"terrarium/internal/credentials"
 	"terrarium/internal/session"
 	"terrarium/internal/store"
 	"terrarium/internal/testutil"
@@ -37,11 +36,6 @@ type env struct {
 	srv *httptest.Server
 }
 
-func hash(token string) string {
-	sum := sha256.Sum256([]byte(token))
-	return hex.EncodeToString(sum[:])
-}
-
 func newEnv(t *testing.T, eventPoll time.Duration) env {
 	t.Helper()
 	st := testutil.NewStore(t)
@@ -49,10 +43,15 @@ func newEnv(t *testing.T, eventPoll time.Duration) env {
 	if err != nil {
 		t.Fatal(err)
 	}
+	for name, token := range map[string]string{"alice": alice, "bob": bob} {
+		if _, err := st.EnsureUser(context.Background(), name, credentials.Hash(token)); err != nil {
+			t.Fatal(err)
+		}
+	}
 	s := &api.Server{
 		Store:      st,
 		Catalog:    cat,
-		Engineers:  api.Engineers{hash(alice): "alice", hash(bob): "bob"},
+		LoginHosts: []string{"localhost"},
 		SessionKey: []byte("test-session-key"),
 		MaxActive:  2,
 		Log:        testutil.Logger(),
@@ -444,6 +443,53 @@ func TestEventStreamDeliversTerminalEvent(t *testing.T) {
 		_ = json.Unmarshal(last.data.Payload, &p)
 		if p["status"] != session.StatusStopped {
 			t.Fatalf("iteration %d: stream ended without the stopped event; last %s", i, last.data.Payload)
+		}
+	}
+}
+
+func TestLogin(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, 10*time.Millisecond)
+	code, first := e.do(t, http.MethodPost, "/login", "", map[string]string{"name": "  Carol "})
+	if code != http.StatusOK || first["name"] != "carol" || first["created"] != true || !strings.HasPrefix(first["token"].(string), "trm_") {
+		t.Fatalf("first login: %d %v", code, first)
+	}
+	_, again := e.do(t, http.MethodPost, "/login", "", map[string]string{"name": "carol"})
+	if again["token"] != first["token"] || again["created"] != false {
+		t.Errorf("second login: %v", again)
+	}
+	token := first["token"].(string)
+	if code, me := e.do(t, http.MethodGet, "/whoami", token, nil); code != http.StatusOK || me["name"] != "carol" {
+		t.Errorf("whoami with login token: %d %v", code, me)
+	}
+	for _, name := range []string{"", "-x", "has space", "ünï", strings.Repeat("a", 40)} {
+		if code, _ := e.do(t, http.MethodPost, "/login", "", map[string]string{"name": name}); code != http.StatusBadRequest {
+			t.Errorf("name %q: %d", name, code)
+		}
+	}
+}
+
+func TestLoginOnlyOnAllowedHosts(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, 10*time.Millisecond)
+	for host, want := range map[string]int{
+		"":                      http.StatusOK, // Host is 127.0.0.1:<port>
+		"localhost:3000":        http.StatusOK,
+		"[::1]:3000":            http.StatusOK,
+		"myhost.tailnet.ts.net": http.StatusForbidden,
+		"192.168.1.10:3000":     http.StatusForbidden,
+	} {
+		req, _ := http.NewRequest(http.MethodPost, e.srv.URL+"/login", strings.NewReader(`{"name":"dave"}`))
+		if host != "" {
+			req.Header.Set("X-Forwarded-Host", host)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != want {
+			t.Errorf("host %q: %d want %d", host, resp.StatusCode, want)
 		}
 	}
 }

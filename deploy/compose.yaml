@@ -42,6 +42,8 @@ services:
       # Commit identity for agent pushes; `make up` takes it from the host's git config.
       TERRARIUM_GIT_USER_NAME: ${TERRARIUM_GIT_USER_NAME:-}
       TERRARIUM_GIT_USER_EMAIL: ${TERRARIUM_GIT_USER_EMAIL:-}
+      # Login is by user name only, so it is served only to these hosts (comma-separated).
+      TERRARIUM_LOGIN_ALLOWED_HOSTS: ${TERRARIUM_LOGIN_ALLOWED_HOSTS:-localhost}
     secrets: [session_key]
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock

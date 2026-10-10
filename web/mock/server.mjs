@@ -4,7 +4,8 @@ import http from "node:http";
 import { randomUUID } from "node:crypto";
 
 const PORT = Number(process.env.MOCK_PORT || 8081);
-const TOKENS = { "dev-token": "dev", "other-token": "mallory" };
+// token -> user; POST /login adds users (token "<name>-token").
+const TOKENS = { "dev-token": "dev", "mallory-token": "mallory" };
 const PRESETS = [{ name: "default" }, { name: "explore" }];
 const ACTIVE_CAP = 3;
 const TOKEN_BUDGET = 2_000_000;
@@ -365,6 +366,15 @@ const server = http.createServer(async (req, res) => {
   console.log(`${req.method} ${url.pathname}${url.search}`);
 
   if (req.method === "GET" && url.pathname === "/healthz") return send(res, 200, { ok: true });
+
+  if (req.method === "POST" && url.pathname === "/login") {
+    const name = String((await readJSON(req))?.name ?? "").trim().toLowerCase();
+    if (!/^[a-z0-9][a-z0-9._-]{0,38}$/.test(name)) return fail(res, 400, "invalid name");
+    const token = `${name}-token`;
+    const created = !(token in TOKENS);
+    TOKENS[token] = name;
+    return send(res, 200, { name, token, created });
+  }
 
   const auth = req.headers.authorization || "";
   const owner = auth.startsWith("Bearer ") ? TOKENS[auth.slice(7)] : undefined;

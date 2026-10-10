@@ -3,8 +3,8 @@
 Base URL: `http://127.0.0.1:8080`. JSON in and out. Errors: `{"error": "<message>"}` with a 4xx/5xx
 status.
 
-**Auth:** every endpoint except `/healthz` requires `Authorization: Bearer <engineer token>`
-(`make token NAME=...`). Missing or unknown token → `401`. A session owned by someone else behaves
+**Auth:** every endpoint except `/healthz` and `/login` requires `Authorization: Bearer <token>`,
+the user's token from `POST /login`. Missing or unknown token → `401`. A session owned by someone else behaves
 as if it does not exist (`404`).
 
 The same operations are available as MCP tools at `POST /mcp`; see [mcp.md](mcp.md).
@@ -14,6 +14,7 @@ The same operations are available as MCP tools at `POST /mcp`; see [mcp.md](mcp.
 | Method | Path | Body | Success |
 |---|---|---|---|
 | `GET` | `/healthz` | – | `200 {"ok":true}` |
+| `POST` | `/login` | `{"name":"alice"}` | `200 {"name","token","created"}`. Creates the user on first use; the same name always gets the same token. Name: lowercased, 1–39 of `a-z 0-9 . _ -`, starting with a letter or digit (`400` otherwise). No password: answered only when the addressed host (`X-Forwarded-Host` from the web UI, else `Host`) is in `TERRARIUM_LOGIN_ALLOWED_HOSTS` (default `localhost`, which includes `127.0.0.1` and `::1`), else `403` |
 | `GET` | `/whoami` | – | `200 {"name":"alice"}` |
 | `GET` | `/presets` | – | `200 {"presets":[{"name":"default"},{"name":"explore"}]}` |
 | `POST` | `/sessions` | `{"name":"...", "harness":"claude-code"\|"codex", "prompt":"...", "repo":"owner/name"?, "preset":"default"?, "model":"..."?, "keep_idle":false?}` | `202 Session` |

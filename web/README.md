@@ -2,8 +2,9 @@
 
 Next.js (App Router, TypeScript) console for Terrarium sessions. It is a backend-for-frontend over
 the HTTP API in `docs/contracts/api.md`: the browser talks only to this app; server components,
-server actions and the SSE proxy route call the API with the engineer token, which lives only in an
-encrypted (`jose`, A256GCM), httpOnly, SameSite=Lax cookie.
+server actions and the SSE proxy route call the API with the user's token, which lives in an
+encrypted (`jose`, A256GCM), httpOnly, SameSite=Lax cookie. Login is by user name (`POST /login`,
+localhost only); the browser gets the token only from `/api/token` when the user clicks a copy action.
 
 `/` is the runs list (stats tiles, search, filters, sort, pagination; all view state in the query
 string) and refreshes every 3 s via `router.refresh()`. `?session=<id>` opens a session in a
@@ -24,7 +25,7 @@ running turn and delete a session. `/sessions` and `/sessions/<id>` redirect to 
 
 The mock (`mock/server.mjs`, no dependencies) implements the API contract in memory, including SSE,
 and simulates the session lifecycle with Claude- and Codex-shaped events and an egress denial.
-Login token: `dev-token` (`other-token` is a second engineer, for 404 checks). Cap: 3 active sessions.
+Log in with any user name; `dev` has seeded sessions, `mallory` is a second user for 404 checks. Cap: 3 active sessions.
 It starts with 64 finished sessions (some failed, some with unpriced models) and 3 live ones that
 fill the cap, one of them with a slow, long-running turn.
 
@@ -63,5 +64,5 @@ docker run --rm -p 3000:3000 \
   -e TERRARIUM_WEB_SECRET=... terrarium-web:local
 ```
 
-Bind to localhost and reach it from other devices over a private overlay (e.g. Tailscale); never
-publish it on a public interface.
+Bind to localhost. Login has no password and the API serves it only for allowed hosts
+(`TERRARIUM_LOGIN_ALLOWED_HOSTS`, default `localhost`); never publish it on a public interface.

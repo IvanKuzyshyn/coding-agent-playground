@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { logout } from "@/app/actions";
+import { UserMenu } from "@/components/user-menu";
 
 const LINKS = [
   { href: "/", label: "Runs", key: "runs" },
@@ -30,18 +30,7 @@ export function TopNav({ user, active = "runs" }: { user: string; active?: (type
             </Link>
           ))}
         </nav>
-        <form action={logout} className="ml-auto flex items-center gap-3">
-          <span className="flex items-center gap-2 rounded-md border border-line px-2 py-1">
-            <span
-              aria-hidden
-              className="flex h-5 w-5 items-center justify-center rounded-full bg-panel2 font-mono text-[10px] uppercase text-muted"
-            >
-              {user.slice(0, 2)}
-            </span>
-            <span className="font-mono text-xs text-fg">{user}</span>
-          </span>
-          <button className="text-xs text-muted hover:text-fg">Log out</button>
-        </form>
+        <UserMenu user={user} />
       </div>
     </header>
   );

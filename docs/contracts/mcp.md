@@ -5,8 +5,9 @@ The server exposes the session operations of the [HTTP API](api.md) as MCP tools
 
 - Endpoint: `POST http://127.0.0.1:8080/mcp`, Streamable HTTP, stateless (no `Mcp-Session-Id`),
   JSON responses. Same process and port as the REST API (`internal/api/mcp.go`, go-sdk v1.8).
-- Auth: `Authorization: Bearer <engineer API token>`, verified like the REST API; missing or
-  unknown → `401`. Sessions created over MCP belong to that engineer and appear in the web UI.
+- Auth: `Authorization: Bearer <user token>` (from `POST /login` or the web UI's user menu),
+  verified like the REST API; missing or unknown → `401`. Sessions created over MCP belong to that
+  user and appear in the web UI.
 - Requests from the sandbox network are refused (`403`), as for the REST API.
 - Tools share the REST handlers' operations (validation, preset resolution, active-session cap,
   ownership: another engineer's session is "session not found"). Caller mistakes come back as tool
@@ -32,10 +33,11 @@ Session (MCP): `id`, `name`, `status`, `harness`, `preset`, `repo`, `model`, `li
 ## Client setup
 
 ```bash
-export TERRARIUM_TOKEN=<engineer token>
+export TERRARIUM_TOKEN=<your token>
 claude mcp add --transport http --scope user terrarium http://127.0.0.1:8080/mcp \
   --header "Authorization: Bearer $TERRARIUM_TOKEN"
 codex mcp add terrarium --url http://127.0.0.1:8080/mcp --bearer-token-env-var TERRARIUM_TOKEN
 ```
 
-The web UI's MCP page shows the same instructions.
+The web UI's MCP page shows the same commands with the token filled in: masked on screen, copied in
+full.

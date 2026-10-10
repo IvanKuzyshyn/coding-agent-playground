@@ -1,5 +1,6 @@
 "use server";
 
+import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import * as api from "@/lib/api";
@@ -27,18 +28,16 @@ function field(form: FormData, name: string): string {
 }
 
 export async function login(_: ActionState, form: FormData): Promise<ActionState> {
-  const token = field(form, "token");
-  if (!token) return { error: "Paste your API token." };
-  let name: string;
+  const requested = field(form, "name");
+  if (!requested) return { error: "Enter a user name." };
+  let user: { name: string; token: string };
   try {
-    name = (await api.whoami(token)).name;
+    user = await api.login(requested, (await headers()).get("host") ?? "");
   } catch (e) {
-    if (e instanceof api.ApiError) {
-      return { error: e.status === 401 ? "Token rejected by the API." : e.message };
-    }
+    if (e instanceof api.ApiError) return { error: e.message };
     return { error: `API unreachable at ${api.API_URL}.` };
   }
-  await setAuth({ token, name });
+  await setAuth(user);
   redirect("/");
 }
 

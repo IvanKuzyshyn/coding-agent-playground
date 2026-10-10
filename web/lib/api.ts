@@ -42,10 +42,17 @@ async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   return (await res.json()) as T;
 }
 
-export async function whoami(token: string): Promise<{ name: string }> {
-  const res = await apiRaw(token, "/whoami");
+// login creates the user on first use. host is what the browser addressed; the API only serves
+// logins for allowed hosts (localhost by default).
+export async function login(name: string, host: string): Promise<{ name: string; token: string }> {
+  const res = await fetch(`${API_URL}/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Forwarded-Host": host },
+    body: JSON.stringify({ name }),
+    cache: "no-store",
+  });
   if (!res.ok) throw await errorFrom(res);
-  return (await res.json()) as { name: string };
+  return (await res.json()) as { name: string; token: string };
 }
 
 // `search` is the query string built by `apiSearch` in lib/query.ts.

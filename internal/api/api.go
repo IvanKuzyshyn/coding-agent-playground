@@ -35,7 +35,6 @@ var repoPattern = regexp.MustCompile(`^[A-Za-z0-9-]{1,39}/[A-Za-z0-9._-]{1,100}$
 type Server struct {
 	Store      *store.Store
 	Catalog    *catalog.Catalog
-	Engineers  Engineers
 	SessionKey []byte
 	MaxActive  int
 	Log        *slog.Logger
@@ -46,6 +45,8 @@ type Server struct {
 	DenyNet *net.IPNet
 	// WebURL is the web UI's base URL, for links returned over MCP.
 	WebURL string
+	// LoginHosts are the host names POST /login answers on ("localhost" includes loopback IPs).
+	LoginHosts []string
 }
 
 func (s *Server) Handler() http.Handler {
@@ -65,8 +66,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 	})
+	mux.HandleFunc("POST /login", s.login)
 	mux.Handle("/mcp", s.mcpHandler())
-	mux.Handle("/", s.Engineers.middleware(authed))
+	mux.Handle("/", s.middleware(authed))
 	return s.denySandboxes(mux)
 }
 
