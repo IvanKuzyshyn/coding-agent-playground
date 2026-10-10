@@ -18,6 +18,7 @@ var ErrConflict = errors.New("conflict")
 type Session struct {
 	ID             uuid.UUID
 	Owner          string
+	Name           string
 	Status         string
 	Harness        string
 	Spec           session.Spec
@@ -25,6 +26,8 @@ type Session struct {
 	ContainerID    string
 	SandboxToken   string
 	TokensUsed     int64
+	CostUSD        float64
+	CostComplete   bool
 	Error          string
 	Attempts       int
 	NextAttemptAt  *time.Time
@@ -57,6 +60,7 @@ type Turn struct {
 type NewSession struct {
 	ID                uuid.UUID
 	Owner             string
+	Name              string
 	Spec              session.Spec
 	SandboxToken      string
 	GatewaySecretHash []byte
@@ -69,8 +73,9 @@ type NewSession struct {
 // ErrLimit is returned when creating a session would exceed the owner's active-session cap.
 var ErrLimit = errors.New("active session limit reached")
 
-const sessionCols = `s.id, s.owner, s.status, s.harness, s.spec, coalesce(s.harness_session,''),
-	coalesce(s.container_id,''), s.sandbox_token, s.tokens_used, coalesce(s.error,''), s.attempts,
+const sessionCols = `s.id, s.owner, s.name, s.status, s.harness, s.spec, coalesce(s.harness_session,''),
+	coalesce(s.container_id,''), s.sandbox_token, s.tokens_used, s.cost_usd::float8, s.cost_complete,
+	coalesce(s.error,''), s.attempts,
 	s.next_attempt_at, s.idle_until, s.expires_at, s.created_at, s.updated_at, s.ended_at,
 	(SELECT count(*) FROM turns t WHERE t.session_id = s.id),
 	(SELECT min(seq) FROM turns t WHERE t.session_id = s.id AND t.status IN ('queued','running'))`
@@ -80,8 +85,8 @@ func scanSession(row pgx.Row) (Session, error) {
 		s    Session
 		spec []byte
 	)
-	err := row.Scan(&s.ID, &s.Owner, &s.Status, &s.Harness, &spec, &s.HarnessSession, &s.ContainerID,
-		&s.SandboxToken, &s.TokensUsed, &s.Error, &s.Attempts, &s.NextAttemptAt, &s.IdleUntil,
+	err := row.Scan(&s.ID, &s.Owner, &s.Name, &s.Status, &s.Harness, &spec, &s.HarnessSession, &s.ContainerID,
+		&s.SandboxToken, &s.TokensUsed, &s.CostUSD, &s.CostComplete, &s.Error, &s.Attempts, &s.NextAttemptAt, &s.IdleUntil,
 		&s.ExpiresAt, &s.CreatedAt, &s.UpdatedAt, &s.EndedAt, &s.TurnCount, &s.CurrentTurn)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return s, ErrNotFound
@@ -113,9 +118,9 @@ func (s *Store) CreateSession(ctx context.Context, n NewSession) error {
 			}
 		}
 		if _, err := tx.Exec(ctx, `
-			INSERT INTO sessions (id, owner, status, harness, spec, sandbox_token, gateway_secret_hash, expires_at)
-			VALUES ($1, $2, 'pending', $3, $4, $5, $6, $7)`,
-			n.ID, n.Owner, n.Spec.Harness, spec, n.SandboxToken, n.GatewaySecretHash, n.ExpiresAt); err != nil {
+			INSERT INTO sessions (id, owner, name, status, harness, spec, sandbox_token, gateway_secret_hash, expires_at)
+			VALUES ($1, $2, $3, 'pending', $4, $5, $6, $7, $8)`,
+			n.ID, n.Owner, n.Name, n.Spec.Harness, spec, n.SandboxToken, n.GatewaySecretHash, n.ExpiresAt); err != nil {
 			return err
 		}
 		if _, err := tx.Exec(ctx, `INSERT INTO turns (session_id, seq, prompt, status) VALUES ($1, 1, $2, 'queued')`,

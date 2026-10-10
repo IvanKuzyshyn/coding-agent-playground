@@ -33,6 +33,8 @@ type Gateway struct {
 	ClaudeTokenFile string `env:"TERRARIUM_CLAUDE_TOKEN_FILE" envDefault:"/run/secrets/claude_oauth_token"`
 	// Codex auth.json from a login dedicated to the gateway. Read-write: the gateway is its only refresher.
 	CodexAuthFile string `env:"TERRARIUM_CODEX_AUTH_FILE" envDefault:"/var/lib/terrarium/codex/auth.json"`
+	// List prices for the API-equivalent cost estimate.
+	PricingFile string `env:"TERRARIUM_PRICING_FILE" envDefault:"/etc/terrarium/pricing.yaml"`
 }
 
 type Migrate struct {

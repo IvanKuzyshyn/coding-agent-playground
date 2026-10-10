@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 
@@ -24,7 +25,10 @@ import (
 	"terrarium/internal/store"
 )
 
-const maxPromptBytes = 100 << 10
+const (
+	maxPromptBytes = 100 << 10
+	maxNameRunes   = 120
+)
 
 var repoPattern = regexp.MustCompile(`^[A-Za-z0-9-]{1,39}/[A-Za-z0-9._-]{1,100}$`)
 
@@ -48,6 +52,7 @@ func (s *Server) Handler() http.Handler {
 	authed.HandleFunc("GET /presets", s.presets)
 	authed.HandleFunc("POST /sessions", s.createSession)
 	authed.HandleFunc("GET /sessions", s.listSessions)
+	authed.HandleFunc("GET /stats", s.stats)
 	authed.HandleFunc("GET /sessions/{id}", s.getSession)
 	authed.HandleFunc("DELETE /sessions/{id}", s.deleteSession)
 	authed.HandleFunc("POST /sessions/{id}/turns", s.createTurn)
@@ -88,6 +93,7 @@ func (s *Server) presets(w http.ResponseWriter, _ *http.Request) {
 
 func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 	var req struct {
+		Name    string `json:"name"`
 		Harness string `json:"harness"`
 		Prompt  string `json:"prompt"`
 		Repo    string `json:"repo"`
@@ -95,6 +101,11 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 		Model   string `json:"model"`
 	}
 	if !decode(w, r, &req) {
+		return
+	}
+	req.Name = strings.Join(strings.Fields(req.Name), " ")
+	if req.Name == "" || utf8.RuneCountInString(req.Name) > maxNameRunes {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("name is required (1-%d characters)", maxNameRunes))
 		return
 	}
 	if msg := validatePrompt(req.Prompt); msg != "" {
@@ -115,6 +126,7 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 	err = s.Store.CreateSession(r.Context(), store.NewSession{
 		ID:                id,
 		Owner:             who,
+		Name:              req.Name,
 		Spec:              spec,
 		SandboxToken:      randomHex(32),
 		GatewaySecretHash: credentials.Hash(credentials.DeriveSecret(s.SessionKey, id.String())),
@@ -133,8 +145,48 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 	s.writeSession(w, r, id, http.StatusAccepted, false)
 }
 
+var (
+	displayStatuses = map[string]bool{"pending": true, "provisioning": true, "idle": true, "running": true, "stopping": true, "stopped": true, "failed": true}
+	harnesses       = map[string]bool{"claude-code": true, "codex": true}
+)
+
 func (s *Server) listSessions(w http.ResponseWriter, r *http.Request) {
-	list, err := s.Store.ListSessionsByOwner(r.Context(), owner(r.Context()), 200)
+	q := r.URL.Query()
+	f := store.ListFilter{Owner: owner(r.Context()), Query: q.Get("q"), Sort: "created_at", Desc: true, Limit: 50}
+	var bad string
+	if f.Statuses, bad = csvParam(q.Get("status"), displayStatuses); bad != "" {
+		writeError(w, http.StatusBadRequest, "unknown status "+strconv.Quote(bad))
+		return
+	}
+	if f.Harnesses, bad = csvParam(q.Get("harness"), harnesses); bad != "" {
+		writeError(w, http.StatusBadRequest, "unknown harness "+strconv.Quote(bad))
+		return
+	}
+	if v := q.Get("sort"); v != "" {
+		if !store.ValidSort(v) {
+			writeError(w, http.StatusBadRequest, "unknown sort "+strconv.Quote(v))
+			return
+		}
+		f.Sort = v
+	}
+	switch q.Get("order") {
+	case "", "desc":
+	case "asc":
+		f.Desc = false
+	default:
+		writeError(w, http.StatusBadRequest, "order must be asc or desc")
+		return
+	}
+	var err error
+	if f.Limit, err = intParam(q.Get("limit"), 50, 1, 200); err != nil {
+		writeError(w, http.StatusBadRequest, "limit: "+err.Error())
+		return
+	}
+	if f.Offset, err = intParam(q.Get("offset"), 0, 0, 1<<30); err != nil {
+		writeError(w, http.StatusBadRequest, "offset: "+err.Error())
+		return
+	}
+	list, total, err := s.Store.ListSessions(r.Context(), f)
 	if err != nil {
 		s.internal(w, err)
 		return
@@ -143,7 +195,43 @@ func (s *Server) listSessions(w http.ResponseWriter, r *http.Request) {
 	for _, ss := range list {
 		out = append(out, toSessionJSON(ss, nil))
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"sessions": out})
+	writeJSON(w, http.StatusOK, map[string]any{"sessions": out, "total": total})
+}
+
+func (s *Server) stats(w http.ResponseWriter, r *http.Request) {
+	st, err := s.Store.Stats(r.Context(), owner(r.Context()))
+	if err != nil {
+		s.internal(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, st)
+}
+
+// csvParam splits a comma-separated parameter and returns the first value not in allowed.
+func csvParam(v string, allowed map[string]bool) ([]string, string) {
+	if v == "" {
+		return nil, ""
+	}
+	var out []string
+	for _, p := range strings.Split(v, ",") {
+		p = strings.TrimSpace(p)
+		if !allowed[p] {
+			return nil, p
+		}
+		out = append(out, p)
+	}
+	return out, ""
+}
+
+func intParam(v string, def, lo, hi int) (int, error) {
+	if v == "" {
+		return def, nil
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < lo || n > hi {
+		return 0, fmt.Errorf("must be an integer in [%d, %d]", lo, hi)
+	}
+	return n, nil
 }
 
 func (s *Server) getSession(w http.ResponseWriter, r *http.Request) {

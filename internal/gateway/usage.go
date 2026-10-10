@@ -6,6 +6,8 @@ import (
 	"io"
 	"strings"
 	"sync"
+
+	"terrarium/internal/pricing"
 )
 
 type usageKind int
@@ -29,20 +31,19 @@ type usageTee struct {
 	kind   usageKind
 	sse    bool
 	sniff  bool // no usable Content-Type: decide SSE vs JSON from the first byte
-	report func(int64)
+	report func(pricing.Usage)
 
 	line     []byte
 	skipLine bool
 	body     []byte
 	skipBody bool
 
-	input, output int64 // Claude
-	codexTotal    int64
+	usage pricing.Usage
 
 	once sync.Once
 }
 
-func newUsageTee(rc io.ReadCloser, kind usageKind, contentType string, report func(int64)) io.ReadCloser {
+func newUsageTee(rc io.ReadCloser, kind usageKind, contentType string, report func(pricing.Usage)) io.ReadCloser {
 	ct := strings.ToLower(contentType)
 	t := &usageTee{rc: rc, kind: kind, report: report}
 	switch {
@@ -130,7 +131,13 @@ func (t *usageTee) sseLine(line []byte) {
 type claudeUsage struct {
 	InputTokens              int64 `json:"input_tokens"`
 	CacheCreationInputTokens int64 `json:"cache_creation_input_tokens"`
+	CacheReadInputTokens     int64 `json:"cache_read_input_tokens"`
 	OutputTokens             int64 `json:"output_tokens"`
+}
+
+func (u claudeUsage) toUsage() pricing.Usage {
+	return pricing.Usage{Input: u.InputTokens, CacheWrite: u.CacheCreationInputTokens,
+		CacheRead: u.CacheReadInputTokens, Output: u.OutputTokens}
 }
 
 type usageEvent struct {
@@ -160,24 +167,21 @@ func (t *usageTee) event(data []byte) {
 	case usageClaude:
 		switch {
 		case e.Type == "message_start" && e.Message != nil && e.Message.Usage != nil:
-			u := e.Message.Usage
-			t.input = u.InputTokens + u.CacheCreationInputTokens
-			t.output = u.OutputTokens
+			t.usage = e.Message.Usage.toUsage()
 		case e.Type == "message_delta" && e.Usage != nil:
 			// Cumulative, so the last one wins.
-			t.output = e.Usage.OutputTokens
+			t.usage.Output = e.Usage.OutputTokens
 		case !t.sse && e.Usage != nil:
-			t.input = e.Usage.InputTokens + e.Usage.CacheCreationInputTokens
-			t.output = e.Usage.OutputTokens
+			t.usage = e.Usage.toUsage()
 		}
 	case usageCodex:
 		if e.Type == "response.completed" && e.Response != nil && e.Response.Usage != nil {
 			u := e.Response.Usage
-			uncached := u.InputTokens
+			var cached int64
 			if u.InputTokensDetails != nil {
-				uncached -= u.InputTokensDetails.CachedTokens
+				cached = u.InputTokensDetails.CachedTokens
 			}
-			t.codexTotal = max(uncached, 0) + u.OutputTokens
+			t.usage = pricing.Usage{Input: max(u.InputTokens-cached, 0), CacheRead: cached, Output: u.OutputTokens}
 		}
 	}
 }
@@ -188,9 +192,8 @@ func (t *usageTee) finish() {
 			t.event(t.body)
 		}
 		t.body = nil
-		total := t.input + t.output + t.codexTotal
-		if total > 0 {
-			t.report(total)
+		if t.usage != (pricing.Usage{}) {
+			t.report(t.usage)
 		}
 	})
 }

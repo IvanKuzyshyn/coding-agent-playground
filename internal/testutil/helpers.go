@@ -54,6 +54,7 @@ func CreateSession(t testing.TB, st *store.Store, owner string, spec session.Spe
 	err := st.CreateSession(ctx, store.NewSession{
 		ID:                id,
 		Owner:             owner,
+		Name:              "test session",
 		Spec:              spec,
 		SandboxToken:      randomHex(16),
 		GatewaySecretHash: []byte(randomHex(16)),

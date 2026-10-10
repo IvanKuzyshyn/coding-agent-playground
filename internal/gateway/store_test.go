@@ -44,8 +44,8 @@ func insertSession(t *testing.T, st *store.Store, harness, status string, budget
 	})
 	ctx := context.Background()
 	_, err := st.Pool().Exec(ctx, `
-		INSERT INTO sessions (id, owner, status, harness, spec, sandbox_token, gateway_secret_hash, tokens_used, expires_at)
-		VALUES ($1, 'gateway-test', $2, $3, $4, $5, $6, $7, now() + interval '1 hour')`,
+		INSERT INTO sessions (id, owner, name, status, harness, spec, sandbox_token, gateway_secret_hash, tokens_used, expires_at)
+		VALUES ($1, 'gateway-test', 'gateway test', $2, $3, $4, $5, $6, $7, now() + interval '1 hour')`,
 		id, status, harness, spec, "sbx-"+id.String(), credentials.Hash(secret), used)
 	if err != nil {
 		t.Fatal(err)

@@ -57,6 +57,7 @@ services:
     volumes:
       # Dedicated Codex login owned by the gateway (`make codex-login`). Never the host's ~/.codex.
       - ${HOME}/.terrarium/codex:/var/lib/terrarium/codex
+      - ../config/pricing.yaml:/etc/terrarium/pricing.yaml:ro
     networks: [default, sandbox]
     depends_on: { postgres: { condition: service_healthy } }
     healthcheck:

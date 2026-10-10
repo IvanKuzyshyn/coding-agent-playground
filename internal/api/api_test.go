@@ -93,7 +93,7 @@ func (e env) do(t *testing.T, method, path, token string, body any) (int, map[st
 
 func (e env) create(t *testing.T, token string) uuid.UUID {
 	t.Helper()
-	code, body := e.do(t, http.MethodPost, "/sessions", token, map[string]string{"harness": "claude-code", "prompt": "hi", "repo": "octo/hello"})
+	code, body := e.do(t, http.MethodPost, "/sessions", token, map[string]string{"name": "test run", "harness": "claude-code", "prompt": "hi", "repo": "octo/hello"})
 	if code != http.StatusAccepted {
 		t.Fatalf("create: %d %v", code, body)
 	}
@@ -149,21 +149,21 @@ func TestCreateValidates(t *testing.T) {
 		name string
 		body any
 	}{
-		{"unknown harness", map[string]string{"harness": "gpt-shell", "prompt": "hi"}},
+		{"unknown harness", map[string]string{"name": "test run", "harness": "gpt-shell", "prompt": "hi"}},
 		{"missing harness", map[string]string{"prompt": "hi"}},
-		{"empty prompt", map[string]string{"harness": "codex", "prompt": "  "}},
-		{"huge prompt", map[string]string{"harness": "codex", "prompt": strings.Repeat("a", 100<<10+1)}},
-		{"bad repo", map[string]string{"harness": "codex", "prompt": "hi", "repo": "https://github.com/octo/hello"}},
-		{"repo traversal", map[string]string{"harness": "codex", "prompt": "hi", "repo": "octo/../x y"}},
-		{"unknown preset", map[string]string{"harness": "codex", "prompt": "hi", "preset": "nope"}},
-		{"unknown field", map[string]string{"harness": "codex", "prompt": "hi", "image": "evil"}},
+		{"empty prompt", map[string]string{"name": "test run", "harness": "codex", "prompt": "  "}},
+		{"huge prompt", map[string]string{"name": "test run", "harness": "codex", "prompt": strings.Repeat("a", 100<<10+1)}},
+		{"bad repo", map[string]string{"name": "test run", "harness": "codex", "prompt": "hi", "repo": "https://github.com/octo/hello"}},
+		{"repo traversal", map[string]string{"name": "test run", "harness": "codex", "prompt": "hi", "repo": "octo/../x y"}},
+		{"unknown preset", map[string]string{"name": "test run", "harness": "codex", "prompt": "hi", "preset": "nope"}},
+		{"unknown field", map[string]string{"name": "test run", "harness": "codex", "prompt": "hi", "image": "evil"}},
 		{"not json", "{"},
 	} {
 		if code, body := e.do(t, http.MethodPost, "/sessions", alice, tc.body); code != http.StatusBadRequest {
 			t.Errorf("%s: %d %v", tc.name, code, body)
 		}
 	}
-	code, body := e.do(t, http.MethodPost, "/sessions", alice, map[string]string{"harness": "codex", "prompt": "hi", "repo": "octo/hello.go", "preset": "explore"})
+	code, body := e.do(t, http.MethodPost, "/sessions", alice, map[string]string{"name": "test run", "harness": "codex", "prompt": "hi", "repo": "octo/hello.go", "preset": "explore"})
 	if code != http.StatusAccepted || body["status"] != "pending" || body["owner"] != "alice" || body["preset"] != "explore" || body["repo"] != "octo/hello.go" {
 		t.Fatalf("create: %d %v", code, body)
 	}
@@ -218,7 +218,7 @@ func TestActiveSessionCap(t *testing.T) {
 	e := newEnv(t, 10*time.Millisecond)
 	first := e.create(t, alice)
 	e.create(t, alice)
-	if code, _ := e.do(t, http.MethodPost, "/sessions", alice, map[string]string{"harness": "codex", "prompt": "hi"}); code != http.StatusTooManyRequests {
+	if code, _ := e.do(t, http.MethodPost, "/sessions", alice, map[string]string{"name": "test run", "harness": "codex", "prompt": "hi"}); code != http.StatusTooManyRequests {
 		t.Errorf("third session: %d", code)
 	}
 	e.create(t, bob) // the cap is per engineer

@@ -21,6 +21,7 @@ import (
 	"github.com/google/uuid"
 
 	"terrarium/internal/credentials"
+	"terrarium/internal/pricing"
 	"terrarium/internal/session"
 	"terrarium/internal/store"
 )
@@ -38,14 +39,16 @@ const maxReplayBody = 10 << 20
 // Store is the subset of *store.Store the gateway uses.
 type Store interface {
 	GatewaySessionBySecretHash(ctx context.Context, hash []byte) (store.GatewaySession, error)
-	AddTokensUsed(ctx context.Context, id uuid.UUID, n int64) (int64, error)
+	AddUsage(ctx context.Context, id uuid.UUID, tokens int64, costUSD float64, priced bool) (int64, error)
 	AppendEvent(ctx context.Context, sessionID uuid.UUID, kind string, turnSeq *int, payload any) error
 }
 
 // Gateway serves the inference listener (Handler) and the CONNECT proxy (ProxyHandler).
 // Set fields before the first call to either; zero values get production defaults.
 type Gateway struct {
-	Store           Store
+	Store Store
+	// Pricing estimates API-equivalent cost per response; nil leaves costs unpriced.
+	Pricing         *pricing.Table
 	ClaudeTokenFile string
 	CodexAuthFile   string
 
@@ -90,6 +93,7 @@ type reqInfo struct {
 	route     route
 	sessionID uuid.UUID
 	body      []byte // Codex only, for replay
+	model     string // from the request body, for pricing
 }
 
 var errNoCredential = errors.New("real credential unavailable")
@@ -215,7 +219,8 @@ func (g *Gateway) serveInference(w http.ResponseWriter, r *http.Request) {
 	}
 
 	info := &reqInfo{route: rt, sessionID: s.ID}
-	if rt.harness == session.HarnessCodex {
+	// Codex bodies are kept for replay after a token refresh; priced routes are read for the model.
+	if rt.harness == session.HarnessCodex || rt.usage != usageNone {
 		body, err := io.ReadAll(io.LimitReader(r.Body, maxReplayBody+1))
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "read request body")
@@ -225,7 +230,10 @@ func (g *Gateway) serveInference(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusRequestEntityTooLarge, "request body too large")
 			return
 		}
-		info.body = body
+		if rt.harness == session.HarnessCodex {
+			info.body = body
+		}
+		info.model = requestModel(body)
 		r.Body = io.NopCloser(bytes.NewReader(body))
 		r.ContentLength = int64(len(body))
 		r.TransferEncoding = nil
@@ -343,22 +351,35 @@ func (g *Gateway) modifyResponse(resp *http.Response) error {
 	slog.Info("upstream response", "session", info.sessionID, "path", resp.Request.URL.Path, "status", resp.StatusCode,
 		"content_type", resp.Header.Get("Content-Type"), "content_encoding", resp.Header.Get("Content-Encoding"))
 	if info.route.usage != usageNone {
-		resp.Body = newUsageTee(resp.Body, info.route.usage, resp.Header.Get("Content-Type"), func(n int64) {
-			g.addUsage(info.sessionID, n)
+		resp.Body = newUsageTee(resp.Body, info.route.usage, resp.Header.Get("Content-Type"), func(u pricing.Usage) {
+			g.addUsage(info.sessionID, info.model, u)
 		})
 	}
 	return nil
 }
 
-func (g *Gateway) addUsage(id uuid.UUID, n int64) {
+// addUsage charges the budget with uncached input + cache writes + output (cache reads are cheap
+// and excluded) and adds the response's API-equivalent cost.
+func (g *Gateway) addUsage(id uuid.UUID, model string, u pricing.Usage) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	total, err := g.Store.AddTokensUsed(ctx, id, n)
+	tokens := u.Input + u.CacheWrite + u.Output
+	cost, priced := g.Pricing.Cost(model, u)
+	total, err := g.Store.AddUsage(ctx, id, tokens, cost, priced)
 	if err != nil {
-		slog.Error("add tokens used", "session", id, "tokens", n, "err", err)
+		slog.Error("add usage", "session", id, "tokens", tokens, "err", err)
 		return
 	}
-	slog.Info("tokens used", "session", id, "tokens", n, "total", total)
+	slog.Info("tokens used", "session", id, "model", model, "tokens", tokens, "cost_usd", cost, "priced", priced, "total", total)
+}
+
+// requestModel reads the "model" field of an inference request body; empty if absent.
+func requestModel(body []byte) string {
+	var b struct {
+		Model string `json:"model"`
+	}
+	_ = json.Unmarshal(body, &b)
+	return b.Model
 }
 
 func (g *Gateway) proxyError(w http.ResponseWriter, r *http.Request, err error) {

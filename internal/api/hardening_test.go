@@ -43,7 +43,7 @@ func TestActiveSessionCapHoldsUnderConcurrency(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			code, _ := e.do(t, http.MethodPost, "/sessions", alice, map[string]string{"harness": "codex", "prompt": "hi"})
+			code, _ := e.do(t, http.MethodPost, "/sessions", alice, map[string]string{"name": "test run", "harness": "codex", "prompt": "hi"})
 			if code == http.StatusAccepted {
 				mu.Lock()
 				created++

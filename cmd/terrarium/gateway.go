@@ -9,6 +9,7 @@ import (
 
 	"terrarium/internal/config"
 	"terrarium/internal/gateway"
+	"terrarium/internal/pricing"
 	"terrarium/internal/store"
 )
 
@@ -23,8 +24,14 @@ func runGateway(ctx context.Context) error {
 	}
 	defer st.Close()
 
+	prices, err := pricing.Load(cfg.PricingFile)
+	if err != nil {
+		// Cost is an estimate only; run without it rather than refuse inference.
+		slog.Warn("pricing table unavailable; costs will be marked incomplete", "err", err)
+	}
 	gw := &gateway.Gateway{
 		Store:           st,
+		Pricing:         prices,
 		ClaudeTokenFile: cfg.ClaudeTokenFile,
 		CodexAuthFile:   cfg.CodexAuthFile,
 	}

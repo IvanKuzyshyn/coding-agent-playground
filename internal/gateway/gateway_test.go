@@ -18,6 +18,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"terrarium/internal/pricing"
 	"testing"
 	"time"
 
@@ -68,7 +69,7 @@ func (f *fakeStore) GatewaySessionBySecretHash(_ context.Context, hash []byte) (
 	return *s, nil
 }
 
-func (f *fakeStore) AddTokensUsed(_ context.Context, id uuid.UUID, n int64) (int64, error) {
+func (f *fakeStore) AddUsage(_ context.Context, id uuid.UUID, n int64, _ float64, _ bool) (int64, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	for _, s := range f.sessions {
@@ -939,7 +940,7 @@ func TestConnectProxy(t *testing.T) {
 func TestUsageTeeMalformed(t *testing.T) {
 	for _, body := range []string{"", "{", "null", `{"usage":"x"}`, `{"usage":{"input_tokens":"a"}}`, "\x00\xff"} {
 		var reported int64
-		tee := newUsageTee(io.NopCloser(strings.NewReader(body)), usageClaude, "application/json", func(n int64) { reported = n })
+		tee := newUsageTee(io.NopCloser(strings.NewReader(body)), usageClaude, "application/json", func(u pricing.Usage) { reported = u.Input + u.CacheWrite + u.Output })
 		b, err := io.ReadAll(tee)
 		if err != nil || string(b) != body {
 			t.Fatalf("body altered: %q %v", b, err)
@@ -950,7 +951,7 @@ func TestUsageTeeMalformed(t *testing.T) {
 		}
 	}
 	var calls int
-	tee := newUsageTee(io.NopCloser(strings.NewReader(`{"usage":{"input_tokens":2,"output_tokens":3}}`)), usageClaude, "application/json", func(int64) { calls++ })
+	tee := newUsageTee(io.NopCloser(strings.NewReader(`{"usage":{"input_tokens":2,"output_tokens":3}}`)), usageClaude, "application/json", func(pricing.Usage) { calls++ })
 	io.ReadAll(tee)
 	tee.Close()
 	tee.Close()
