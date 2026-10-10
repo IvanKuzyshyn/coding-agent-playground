@@ -52,7 +52,9 @@ make up        # builds images, applies migrations, starts postgres, server, gat
 
 - Web UI: http://127.0.0.1:3000. Log in with a user name; a new name creates the user. The user
   menu (top right) copies your API token.
-- API: http://127.0.0.1:8080 (`Authorization: Bearer <token>`), see `docs/contracts/api.md`. A
+- API: http://127.0.0.1:8080 (`Authorization: Bearer <token>`), see `docs/contracts/api.md`.
+  Interactive docs: http://127.0.0.1:8080/docs (also **API** in the web UI's top bar); spec at
+  `/openapi.yaml`. A
   token is also returned by `curl -s -XPOST localhost:8080/login -d '{"name":"alice"}'`.
 - Login has no password, so it only works on `localhost` (`TERRARIUM_LOGIN_ALLOWED_HOSTS`, a
   comma-separated list for the server). Never publish the ports on a public interface.

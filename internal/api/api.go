@@ -50,24 +50,44 @@ type Server struct {
 	LoginHosts []string
 }
 
+type route struct {
+	pattern string
+	public  bool // served without a token
+	handler http.HandlerFunc
+}
+
+// restRoutes are the REST endpoints; each must be described in openapi.yaml (openapi_test.go).
+func (s *Server) restRoutes() []route {
+	return []route{
+		{"GET /healthz", true, func(w http.ResponseWriter, _ *http.Request) {
+			writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+		}},
+		{"POST /login", true, s.login},
+		{"GET /whoami", false, s.whoami},
+		{"GET /presets", false, s.presets},
+		{"POST /sessions", false, s.createSession},
+		{"GET /sessions", false, s.listSessions},
+		{"GET /stats", false, s.stats},
+		{"GET /sessions/{id}", false, s.getSession},
+		{"DELETE /sessions/{id}", false, s.deleteSession},
+		{"POST /sessions/{id}/turns", false, s.createTurn},
+		{"POST /sessions/{id}/turns/current/stop", false, s.stopTurn},
+		{"GET /sessions/{id}/events", false, s.events},
+	}
+}
+
 func (s *Server) Handler() http.Handler {
 	authed := http.NewServeMux()
-	authed.HandleFunc("GET /whoami", s.whoami)
-	authed.HandleFunc("GET /presets", s.presets)
-	authed.HandleFunc("POST /sessions", s.createSession)
-	authed.HandleFunc("GET /sessions", s.listSessions)
-	authed.HandleFunc("GET /stats", s.stats)
-	authed.HandleFunc("GET /sessions/{id}", s.getSession)
-	authed.HandleFunc("DELETE /sessions/{id}", s.deleteSession)
-	authed.HandleFunc("POST /sessions/{id}/turns", s.createTurn)
-	authed.HandleFunc("POST /sessions/{id}/turns/current/stop", s.stopTurn)
-	authed.HandleFunc("GET /sessions/{id}/events", s.events)
-
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
-	})
-	mux.HandleFunc("POST /login", s.login)
+	for _, rt := range s.restRoutes() {
+		if rt.public {
+			mux.HandleFunc(rt.pattern, rt.handler)
+		} else {
+			authed.HandleFunc(rt.pattern, rt.handler)
+		}
+	}
+	mux.HandleFunc("GET /openapi.yaml", serveSpec)
+	mux.HandleFunc("GET /docs", serveDocs)
 	mux.Handle("/mcp", s.mcpHandler())
 	mux.Handle("/", s.middleware(authed))
 	return s.denySandboxes(mux)

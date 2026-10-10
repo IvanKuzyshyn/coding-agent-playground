@@ -1,6 +1,8 @@
 # HTTP API contract (v1)
 
-Base URL: `http://127.0.0.1:8080`. JSON in and out. Errors: `{"error": "<message>"}` with a 4xx/5xx
+Base URL: `http://127.0.0.1:8080`. JSON in and out. Machine-readable spec: `GET /openapi.yaml`
+(OpenAPI 3.1, `internal/api/openapi.yaml`); interactive docs: `GET /docs` (Scalar). Tests fail if a
+REST route or response shape differs from the spec, so update it with every API change. Errors: `{"error": "<message>"}` with a 4xx/5xx
 status.
 
 **Auth:** every endpoint except `/healthz` and `/login` requires `Authorization: Bearer <token>`,

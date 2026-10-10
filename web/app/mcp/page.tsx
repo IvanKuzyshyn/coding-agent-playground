@@ -2,10 +2,9 @@ import type { ReactNode } from "react";
 import { CopyBlock } from "@/components/copy-block";
 import { TopNav } from "@/components/top-nav";
 import { requireAuth } from "@/lib/auth";
+import { PUBLIC_API_URL } from "@/lib/public-api";
 import { TOKEN_MASK } from "@/lib/token";
 
-// The API as the engineer's machine reaches it (the web server itself uses the in-network URL).
-const PUBLIC_API_URL = process.env.TERRARIUM_PUBLIC_API_URL ?? "http://127.0.0.1:8080";
 
 const TOOLS: [string, string][] = [
   ["list_options", "harnesses and presets (limits, allowed hosts, lifecycle)"],

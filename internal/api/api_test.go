@@ -80,7 +80,10 @@ func (e env) do(t *testing.T, method, path, token string, body any) (int, map[st
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	resp, err := specClient(t).Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}

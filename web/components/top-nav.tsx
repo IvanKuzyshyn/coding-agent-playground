@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Logo } from "@/components/logo";
 import { UserMenu } from "@/components/user-menu";
+import { PUBLIC_API_URL } from "@/lib/public-api";
 
 const LINKS = [
   { href: "/", label: "Runs", key: "runs" },
@@ -26,6 +27,17 @@ export function TopNav({ user, active = "runs" }: { user: string; active?: (type
               {l.label}
             </Link>
           ))}
+          <a
+            href={`${PUBLIC_API_URL}/docs`}
+            target="_blank"
+            rel="noreferrer"
+            className="flex items-center gap-1 rounded-md px-2.5 py-1 text-sm text-muted hover:text-fg"
+          >
+            API
+            <svg viewBox="0 0 12 12" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="1.2" aria-hidden>
+              <path d="M4.5 2.5h5v5M9.5 2.5 3 9" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </a>
         </nav>
         <UserMenu user={user} />
       </div>
