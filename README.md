@@ -67,7 +67,7 @@ make up        # builds images, applies migrations, starts postgres, server, gat
 T=<engineer token>; H="Authorization: Bearer $T"
 # start a session on a public repo
 ID=$(curl -s -XPOST localhost:8080/sessions -H "$H" \
-  -d '{"harness":"claude-code","repo":"octocat/Hello-World","prompt":"What is this repo?"}' | jq -r .id)
+  -d '{"name":"explore hello world","harness":"claude-code","repo":"octocat/Hello-World","prompt":"What is this repo?"}' | jq -r .id)
 # attach to the live stream (Ctrl-C to detach; reconnect any time with Last-Event-ID)
 curl -N localhost:8080/sessions/$ID/events -H "$H" -H 'Accept: text/event-stream'
 # follow-up, stop the running turn, inspect egress decisions, delete
