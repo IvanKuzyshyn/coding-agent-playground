@@ -15,9 +15,15 @@ export function LoginForm() {
         autoFocus
         required
         maxLength={39}
-        placeholder="User name"
+        placeholder="e.g. ivan.kuzyshyn"
+        aria-describedby="name-hint"
         className="rounded border border-line bg-panel px-3 py-2 font-mono text-sm outline-none focus:border-accent"
       />
+      <p id="name-hint" className="-mt-1 text-xs text-muted">
+        Up to 39 characters: lowercase letters, digits and <code className="font-mono">.</code>{" "}
+        <code className="font-mono">_</code> <code className="font-mono">-</code>, no spaces. Example:{" "}
+        <code className="font-mono text-fg">ivan.kuzyshyn</code>
+      </p>
       <button
         disabled={pending}
         className="rounded bg-accent px-3 py-2 text-sm font-medium text-black disabled:opacity-50"
