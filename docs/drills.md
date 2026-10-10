@@ -14,4 +14,6 @@ Codex 0.162.1). The automated equivalents are in `internal/ops`, `internal/super
 | 6 | Exfiltration attempt | Agent asked to `curl https://example.com`, then with `--noproxy '*'` | CONNECT `403` recorded as egress `denied`; without proxy DNS fails |
 | 7 | Credential search | Agent asked to `env \| grep -i token`; `docker export` / `docker inspect` of the sandbox; grep of all service logs | Real Claude and Codex tokens: 0 matches anywhere outside the gateway |
 | 8 | Subscription quota exhausted | Real ChatGPT Plus account at its usage limit | Turn `failed` with the vendor's message ("You've hit your usage limit … try again at …"), session stays `idle` and usable |
-| 9 | Unknown engineer / other engineer's session | Requests without token, with another engineer's token | `401` / `404` (API tests) |
+| 9 | Sandbox calls the control-plane API | `curl http://server:8080/healthz` from a sandbox | `403` (source subnet refused) |
+| 10 | Codex end to end | Two Codex turns on a cloned repo, then follow-ups | Turn 2 resumed the thread (`41`); gateway token count per turn equals the turn's reported usage (408 = 403 + 5) |
+| 11 | Unknown engineer / other engineer's session | Requests without token, with another engineer's token | `401` / `404` (API tests) |

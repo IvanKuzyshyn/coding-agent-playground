@@ -46,7 +46,8 @@ prompt-injected agent is equivalent to an attacker with a shell as uid 1000 in t
 | Inference on the engineer's subscription | Yes, until the session ends or its token budget is spent | The placeholder is a capability for the gateway; it dies with the session |
 | Other sessions' sandboxes | Network yes, control no | Shared network; sandboxd requires a per-sandbox token that agents never see |
 | Gateway account APIs (`/api/oauth/*`, `chatgpt.com/backend-api/*` other than inference) | No | Exact route allowlist |
-| Server API, Postgres, Docker socket | No | Not on the sandbox network |
+| Server API | No | The server joins the sandbox network only to reach sandboxd; the API refuses every request from the pinned sandbox subnet (`403`, verified from a live sandbox) |
+| Postgres, web UI, Docker socket | No | Not on the sandbox network |
 | Host filesystem | No | No host mounts; read-only root; home is a per-session volume |
 
 ## 3. Threats and controls
@@ -143,3 +144,7 @@ uid 1000.
 5. The gateway's Claude credential use sits close to Anthropic's terms (§5).
 6. No TLS between components on the local machine; the web UI is plain HTTP on localhost (use
    `tailscale serve` for HTTPS from other devices).
+7. The per-session home volume has no disk quota (Docker Desktop volumes do not support size
+   limits); one agent can fill the Docker VM disk. Real setup: XFS project quotas or a sized
+   block volume per sandbox.
+8. The sandboxd token is visible to operators via `docker inspect` (not to agents).
