@@ -32,8 +32,11 @@ func (s *Store) AppendEvent(ctx context.Context, sessionID uuid.UUID, kind strin
 	if err != nil {
 		return err
 	}
-	_, err = s.pool.Exec(ctx,
-		`INSERT INTO session_events (session_id, kind, turn_seq, payload) VALUES ($1, $2, $3, $4)`,
+	// The gateway does not know turns; attribute its egress events to the running turn, if any.
+	_, err = s.pool.Exec(ctx, `
+		INSERT INTO session_events (session_id, kind, turn_seq, payload)
+		VALUES ($1, $2, coalesce($3, CASE WHEN $2 = 'egress' THEN
+			(SELECT seq FROM turns WHERE session_id = $1 AND status = 'running' ORDER BY seq DESC LIMIT 1) END), $4)`,
 		sessionID, kind, turnSeq, b)
 	return err
 }

@@ -174,7 +174,8 @@ func (s *Store) SetStatus(ctx context.Context, id uuid.UUID, from []string, to, 
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		tag, err := tx.Exec(ctx, `
 			UPDATE sessions SET status = $3, updated_at = now(),
-				ended_at = CASE WHEN $3 = 'stopped' THEN now() ELSE ended_at END
+				ended_at = CASE WHEN $3 = 'stopped' THEN now() ELSE ended_at END,
+				idle_until = CASE WHEN $3 IN ('stopping','stopped','failed') THEN NULL ELSE idle_until END
 			WHERE id = $1 AND status = ANY($2)`, id, from, to)
 		if err != nil || tag.RowsAffected() == 0 {
 			return err
