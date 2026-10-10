@@ -14,6 +14,7 @@ var openapiSpec []byte
 // docsPage loads Scalar (pinned, integrity-checked) in the browser and points it at the spec. Its
 // "Try it" requests go to this server with the token entered under Authorize. Scalar's hosted
 // extras (AI chat, developer toolbar, MCP generator) are off: they send the spec to Scalar's cloud.
+// Code samples are curl only (hiddenClients lists every other target), and the theme is dark only.
 const docsPage = `<!doctype html>
 <html lang="en">
 <head>
@@ -23,7 +24,19 @@ const docsPage = `<!doctype html>
 </head>
 <body>
 <script id="api-reference" data-url="/openapi.yaml"
-  data-configuration='{"theme":"deepSpace","darkMode":true,"showDeveloperTools":"never","agent":{"disabled":true},"mcp":{"disabled":true}}'></script>
+  data-configuration='{
+    "theme": "deepSpace",
+    "darkMode": true, "forceDarkModeState": "dark", "hideDarkModeToggle": true,
+    "hideClientButton": true,
+    "defaultHttpClient": {"targetKey": "shell", "clientKey": "curl"},
+    "hiddenClients": {
+      "c": true, "clojure": true, "csharp": true, "dart": true, "fsharp": true, "go": true,
+      "http": true, "java": true, "js": true, "julia": true, "kotlin": true, "node": true,
+      "objc": true, "ocaml": true, "php": true, "powershell": true, "python": true, "r": true,
+      "ruby": true, "rust": true, "swift": true, "shell": ["httpie", "wget"]
+    },
+    "showDeveloperTools": "never", "agent": {"disabled": true}, "mcp": {"disabled": true}
+  }'></script>
 <script src="https://cdn.jsdelivr.net/npm/@scalar/api-reference@1.73.1/dist/browser/standalone.js"
   integrity="sha384-kYDGzV91Jnn3TbHINV3nt54riK2uMJDfN5Al8dAkz4FssELTBWbD8rgw32sTKfOi"
   crossorigin="anonymous"></script>
