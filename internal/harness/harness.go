@@ -29,7 +29,7 @@ type Gateway struct {
 }
 
 // GitHubURL is the sandbox's base URL for the gateway's /github/ route, carrying the placeholder
-// credential git and terrarium-pr authenticate with.
+// credential git and pull-request API calls authenticate with.
 func GitHubURL(gw Gateway, secret string) string {
 	u, err := url.Parse(gw.URL)
 	if err != nil {
@@ -131,10 +131,19 @@ Only when the user asks you to push or open a pull request:
    one named %s<short-slug> (new branches with other names are rejected). Branches cannot be
    deleted.
 2. git push -u origin <branch>
-3. terrarium-pr "<title>" "<body>" opens the pull request on %s from the current branch.
+3. Open the pull request with the GitHub REST API through the platform gateway. The gh CLI is
+   not authenticated and cannot reach GitHub here, so do not use it:
 
-No other GitHub repository or API is reachable. The gh CLI is installed but has no GitHub access
-here; use git and terrarium-pr instead.
+   jq -n --arg title "<title>" --arg body "<body>" --arg head "<branch>" --arg base "<base branch>" \
+     '{title: $title, body: $body, head: $head, base: $base, draft: true}' |
+     curl -sS --fail-with-body -X POST -H 'Accept: application/vnd.github+json' \
+       --data-binary @- "$TERRARIUM_GITHUB_URL/api/repos/$TERRARIUM_REPO/pulls"
+
+   Set draft to false for a pull request that is ready for review. The response's html_url is
+   the pull request's address.
+
+Only %s is reachable, and on GitHub's API only creating pull requests (POST .../pulls);
+other repositories and endpoints are rejected.
 `, session.BranchPrefix(sessionID), spec.Repo)
 }
 

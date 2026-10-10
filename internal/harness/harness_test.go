@@ -112,7 +112,7 @@ func TestSetupFilesPublishGuide(t *testing.T) {
 			t.Errorf("%s: %+v", harness, files)
 		}
 		files = SetupFiles("sid", session.Spec{Harness: harness}, gw, strings.Repeat("a", 64), "")
-		if guide := string(files[0].Data); files[0].Path != path || !strings.Contains(guide, OutcomeMarker) || strings.Contains(guide, "terrarium-pr") {
+		if guide := string(files[0].Data); files[0].Path != path || !strings.Contains(guide, OutcomeMarker) || strings.Contains(guide, "/pulls") {
 			t.Errorf("%s without a repo: %s", harness, guide)
 		}
 	}
