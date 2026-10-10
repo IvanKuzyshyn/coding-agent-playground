@@ -570,3 +570,24 @@ func TestIsLost(t *testing.T) {
 		t.Errorf("missing sandbox: lost=%v err=%v", lost, err)
 	}
 }
+
+// A worker that read the session as idle just before DELETE moved it to stopping must not start
+// the harness, but RunTurn ignores that its idle→running transition did not apply.
+func TestRunTurnDoesNotStartOnStoppingSession(t *testing.T) {
+	t.Skip("BUG: ops/turn.go:31 RunTurn ignores SetStatus's changed=false and starts the harness on a session that is no longer idle")
+	t.Parallel()
+	e := newEnv(t)
+	e.fleet.Program = turnPrograms(claudeHappy())
+	s := e.provisioned(t, testutil.Spec(session.HarnessClaude))
+	tn, err := e.st.ActiveTurn(context.Background(), s.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.st.SetStatus(context.Background(), s.ID, []string{session.StatusIdle}, session.StatusStopping, "deleted by alice"); err != nil {
+		t.Fatal(err)
+	}
+	_ = e.ops.RunTurn(context.Background(), s, tn) // s is the stale idle snapshot
+	if n := e.fleet.Starts(s.ID); n != 0 {
+		t.Errorf("harness started on a stopping session (%d processes)", n)
+	}
+}

@@ -426,3 +426,21 @@ func TestSecondSupervisorWaitsForLock(t *testing.T) {
 	e.fleet.AddOrphan(orphan)
 	testutil.Eventually(t, wait, "second supervisor reconciles", func() bool { return !e.fleet.Exists(orphan) })
 }
+
+// Plan §4.2 step 2: sessions in idle|running with no container → failed, then stopped. Only the
+// running case is detected (when a turn's sandboxd call fails); an idle session whose sandbox
+// vanished stays idle until its idle timeout.
+func TestLostSandboxWhileIdle(t *testing.T) {
+	t.Skip("BUG: supervisor/supervisor.go:71-89 reconcile never checks idle sessions for a lost sandbox; the session stays idle")
+	t.Parallel()
+	e := newEnv(t)
+	e.fleet.Program = turns(claudeTurn())
+	e.start(t)
+	s := testutil.CreateSession(t, e.st, "alice", testutil.Spec(session.HarnessClaude), "hi")
+	e.waitTurn(t, s.ID, 1, session.TurnComplete)
+	e.waitStatus(t, s.ID, session.StatusIdle)
+	e.fleet.Lose(s.ID)
+	if s = e.waitStatus(t, s.ID, session.StatusStopped); s.Error != "sandbox lost" {
+		t.Errorf("error %q", s.Error)
+	}
+}
