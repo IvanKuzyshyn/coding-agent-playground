@@ -1,0 +1,29 @@
+name: terrarium-s1
+
+services:
+  gateway:
+    build: ./proxy
+    environment:
+      PLACEHOLDER_TOKEN: sk-ant-oat01-terrarium-placeholder-s1
+      # Real value comes from the host shell only (see run.sh); never written to a file.
+      REAL_CLAUDE_OAUTH_TOKEN: ${REAL_CLAUDE_OAUTH_TOKEN:?set REAL_CLAUDE_OAUTH_TOKEN}
+      CONNECT_ALLOW: ${CONNECT_ALLOW:-}
+    networks: [sandbox-net, egress]
+
+  agent:
+    build: ./agent
+    environment:
+      CLAUDE_CODE_OAUTH_TOKEN: sk-ant-oat01-terrarium-placeholder-s1
+      ANTHROPIC_BASE_URL: http://gateway:8080/anthropic
+      HTTPS_PROXY: http://gateway:3128
+      HTTP_PROXY: http://gateway:3128
+      NO_PROXY: gateway
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    networks: [sandbox-net]
+    depends_on: [gateway]
+
+networks:
+  sandbox-net:
+    internal: true
+  egress: {}
