@@ -157,7 +157,7 @@ function ClaudeEvent({ ev, e, hideResultText }: { ev: SessionEvent; e: Obj; hide
         <div className="rounded border border-line bg-panel2 px-2 py-1.5">
           <div className="mb-1 flex flex-wrap gap-x-3 font-mono text-[11px] text-muted">
             <span className={isErr ? "text-red-300" : "text-emerald-300"}>{str(e.subtype) || "result"}</span>
-            {num(e.num_turns) !== undefined && <span>{num(e.num_turns)} steps</span>}
+            {num(e.num_turns) !== undefined && <span>{num(e.num_turns)} {num(e.num_turns) === 1 ? "step" : "steps"}</span>}
             <span>{usageLine(obj(e.usage), "claude-code")}</span>
             {cost !== undefined && <span title="Client-side estimate; not billed on a subscription">${cost.toFixed(3)} API-equiv</span>}
           </div>

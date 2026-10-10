@@ -192,7 +192,7 @@ function Header({ session, running, onClose }: { session: Session; running: bool
         </Meta>
         <Meta label="Repo">{session.repo ?? "–"}</Meta>
         <Meta label="Preset">{session.preset}</Meta>
-        <Meta label="Model">{session.model ?? "default"}</Meta>
+        <Meta label="Model">{session.model ?? "harness default"}</Meta>
         <Meta label="Duration">
           <LiveDuration session={session} />
         </Meta>
@@ -297,7 +297,8 @@ function UsageLine({ usage }: { usage: NonNullable<Turn["usage"]> }) {
   return (
     <span className="font-mono text-[11px] text-muted">
       in {formatTokens(usage.input_tokens)} · cached {formatTokens(usage.cached_input_tokens)} · out{" "}
-      {formatTokens(usage.output_tokens)} · {usage.agent_steps} steps
+      {formatTokens(usage.output_tokens)}
+      {stepsLabel(usage.agent_steps)}
     </span>
   );
 }
@@ -322,7 +323,7 @@ function Turns({ turns }: { turns: Turn[] }) {
                 <StatusDot status={t.status} className="w-28 shrink-0 text-xs" />
                 <span className="min-w-0 flex-1 truncate text-fg">{t.prompt}</span>
                 <span className="hidden shrink-0 font-mono text-[11px] text-muted sm:inline">
-                  {t.usage ? `${formatTokens(t.usage.input_tokens + t.usage.output_tokens)} tok · ${t.usage.agent_steps} steps` : ""}
+                  {t.usage ? `${formatTokens(t.usage.input_tokens + t.usage.output_tokens)} tok${stepsLabel(t.usage.agent_steps)}` : ""}
                   {secs !== null ? ` · ${formatDuration(secs)}` : ""}
                 </span>
               </summary>
@@ -628,4 +629,10 @@ function FollowUp({
       </div>
     </form>
   );
+}
+
+// Codex does not report agent steps (0); show steps only when the harness counted them.
+function stepsLabel(steps: number): string {
+  if (!steps) return "";
+  return ` · ${steps} ${steps === 1 ? "step" : "steps"}`;
 }

@@ -94,6 +94,9 @@ Unknown values → `400`. `total` is the number of sessions matching the filters
   "status": "queued|running|complete|failed|stopped|limit_exceeded",
   "result": "final assistant message",    // omitted until finished
   "error": "...",                         // omitted if none
+  // Per turn. input_tokens excludes cached tokens for both harnesses. agent_steps is reported by
+  // Claude only (0 for Codex). Codex turns also carry thread_input_tokens, thread_output_tokens and
+  // thread_cached_input_tokens: the thread totals the per-turn values are derived from.
   "usage": {"input_tokens": 0, "output_tokens": 0, "cached_input_tokens": 0, "agent_steps": 0},
   "created_at": "RFC3339", "started_at": "RFC3339", "ended_at": "RFC3339"
 }

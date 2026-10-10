@@ -39,8 +39,10 @@ export function RunsView({
     (openSession?.id === openId ? openSession : null) ?? list.sessions.find((s) => s.id === openId) ?? null;
   const drawerError = openId && openId === urlQuery.session && !openSession ? openError : null;
 
-  const first = list.total === 0 ? 0 : (urlQuery.page - 1) * PAGE_SIZE + 1;
-  const last = Math.min(list.total, urlQuery.page * PAGE_SIZE);
+  // Derived from the rows actually returned, so a page past the end reads "0–0 of N", not "51–15".
+  const offset = (urlQuery.page - 1) * PAGE_SIZE;
+  const first = list.sessions.length === 0 ? 0 : offset + 1;
+  const last = list.sessions.length === 0 ? 0 : offset + list.sessions.length;
   const filtered = query.q !== "" || query.status.length > 0 || query.harness.length > 0;
 
   return (
