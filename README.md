@@ -34,17 +34,14 @@ flowchart LR
 ## Prerequisites
 
 macOS with Docker Desktop, Go 1.27, Node 24, `jq`, `openssl`, a Claude Max and/or ChatGPT Plus
-subscription, and the `claude` and `codex` CLIs on the host (for the one-time logins).
+subscription, and the `claude` and `codex` CLIs on the host (for the one-time logins), optionally `gh`.
 
 ## Setup (once)
 
 ```bash
-# Claude: create a long-lived token and keep it in the keychain (paste at the prompt)
-claude setup-token
-security add-generic-password -a "$USER" -s terrarium-claude-oauth -w
-
-# Codex: a ChatGPT login owned by the gateway (separate from ~/.codex)
-make codex-login
+# Claude token and GitHub token -> macOS keychain; Codex login -> ~/.terrarium/codex
+# (separate from ~/.codex). Pick the tools, then follow each login.
+make credentials
 
 # Engineer API token (printed once)
 make token NAME=alice

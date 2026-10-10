@@ -3,7 +3,7 @@ COMPOSE := docker compose -f deploy/compose.yaml
 CLAUDE_TOKEN = $$(security find-generic-password -a "$$USER" -s terrarium-claude-oauth -w 2>/dev/null)
 CODEX_HOME_DIR := $(HOME)/.terrarium/codex
 
-.PHONY: up deps-up down reset migrate logs ps build test vet image-agent token codex-login
+.PHONY: up deps-up down reset migrate logs ps build test vet image-agent token codex-login credentials
 
 up: image-agent ## Start postgres, server, gateway and web UI
 	@mkdir -p $(CODEX_HOME_DIR)
@@ -57,3 +57,6 @@ codex-login: ## Log in to ChatGPT for the gateway's own Codex credential (separa
 	@mkdir -p $(CODEX_HOME_DIR)
 	@printf 'cli_auth_credentials_store = "file"\n' > $(CODEX_HOME_DIR)/config.toml
 	CODEX_HOME=$(CODEX_HOME_DIR) codex login --device-auth
+
+credentials: ## Interactively set up Claude, Codex and GitHub credentials on the host
+	go run ./cmd/credentials
