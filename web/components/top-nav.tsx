@@ -1,7 +1,12 @@
 import Link from "next/link";
 import { logout } from "@/app/actions";
 
-export function TopNav({ user }: { user: string }) {
+const LINKS = [
+  { href: "/", label: "Runs", key: "runs" },
+  { href: "/mcp", label: "MCP", key: "mcp" },
+] as const;
+
+export function TopNav({ user, active = "runs" }: { user: string; active?: (typeof LINKS)[number]["key"] }) {
   return (
     <header className="sticky top-0 z-20 border-b border-line bg-bg/95 backdrop-blur">
       <div className="flex h-12 items-center gap-4 px-3 sm:px-6">
@@ -13,10 +18,17 @@ export function TopNav({ user }: { user: string }) {
           </svg>
           Terrarium
         </Link>
-        <nav aria-label="Main">
-          <Link href="/" aria-current="page" className="rounded-md bg-panel2 px-2.5 py-1 text-sm text-fg">
-            Runs
-          </Link>
+        <nav aria-label="Main" className="flex items-center gap-1">
+          {LINKS.map((l) => (
+            <Link
+              key={l.key}
+              href={l.href}
+              aria-current={l.key === active ? "page" : undefined}
+              className={`rounded-md px-2.5 py-1 text-sm ${l.key === active ? "bg-panel2 text-fg" : "text-muted hover:text-fg"}`}
+            >
+              {l.label}
+            </Link>
+          ))}
         </nav>
         <form action={logout} className="ml-auto flex items-center gap-3">
           <span className="flex items-center gap-2 rounded-md border border-line px-2 py-1">

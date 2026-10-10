@@ -80,6 +80,7 @@ The platform does not try to detect injection; it limits what an injected agent 
 | Steal the sandboxd token to drive another sandbox | Token unset from sandboxd's env, `/proc/1/environ` unreadable, children don't inherit it | Demonstrated (sandboxd tests). Residual: visible to operators via `docker inspect` |
 | Read real tokens from logs | Gateway logs header names only | Demonstrated (log grep: 0 matches) |
 | Codex refresh-token rotation conflict / theft | Gateway is the only refresher of a dedicated login; Codex in the sandbox has fake refresh tokens answered by the gateway | Demonstrated in spike S2; refresh logic unit-tested |
+| A prompt-injected agent that holds an engineer token over MCP | Same power as the token over REST: creates and ends that engineer's sessions, bounded by the active-session cap and per-session budgets. Sandboxes cannot reach `/mcp` (sandbox subnet refused) | Residual. Claude Code stores the token in its config when added with `--header`; Codex reads it from an env var. Later: scoped tokens per MCP client |
 | Steal engineer API token from the browser | httpOnly encrypted cookie; browser never sees the token | Demonstrated (UI e2e scanned all responses) |
 | Compromise of the host or Docker socket | Server holds the Docker socket (root-equivalent) | Accepted locally. Design: replace with a sandbox runtime API (Kata/Firecracker) with scoped credentials |
 

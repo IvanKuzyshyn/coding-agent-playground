@@ -79,6 +79,18 @@ curl -s -XPOST localhost:8080/sessions -H "$H" \
   -d '{"name":"readme fix","harness":"codex","repo":"<you>/<repo>","prompt":"Fix a typo in README.md, push and open a PR."}'
 ```
 
+## Use it from another agent (MCP)
+
+Terrarium is also an MCP server at `http://127.0.0.1:8080/mcp` with tools to list presets, create,
+wait for, inspect, follow up and terminate sessions (`docs/contracts/mcp.md`). The web UI's **MCP**
+page has copy-paste setup; for Claude Code:
+
+```bash
+export TERRARIUM_TOKEN=<engineer token>
+claude mcp add --transport http --scope user terrarium http://127.0.0.1:8080/mcp \
+  --header "Authorization: Bearer $TERRARIUM_TOKEN"
+```
+
 ## Tests
 
 ```bash
@@ -96,4 +108,4 @@ SSE).
 ## Not in this prototype
 
 IaC for a real deployment, Kubernetes, microVM isolation, per-engineer GitHub credentials (one
-`gh` token for the deployment today), MCP surface, mid-turn steering. The threat model and plan describe how they fit.
+`gh` token for the deployment today), mid-turn steering. The threat model and plan describe how they fit.

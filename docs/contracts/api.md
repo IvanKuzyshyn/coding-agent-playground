@@ -7,6 +7,8 @@ status.
 (`make token NAME=...`). Missing or unknown token → `401`. A session owned by someone else behaves
 as if it does not exist (`404`).
 
+The same operations are available as MCP tools at `POST /mcp`; see [mcp.md](mcp.md).
+
 ## Endpoints
 
 | Method | Path | Body | Success |
