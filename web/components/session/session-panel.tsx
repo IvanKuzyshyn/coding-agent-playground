@@ -252,9 +252,29 @@ function Timeline({ session, events }: { session: Session; events: SessionEvent[
   }, [events]);
   const repeatedResults = useMemo(() => findRepeatedResults(events), [events]);
   const sessionEvents = events.filter((e) => !e.turn_seq);
+  // Collapsed turns are tracked here rather than left to <details>, so live updates never reopen them.
+  const [collapsed, setCollapsed] = useState<Set<number>>(new Set());
+  const toggle = (seq: number, open: boolean) =>
+    setCollapsed((prev) => {
+      if (open !== prev.has(seq)) return prev;
+      const next = new Set(prev);
+      if (open) next.delete(seq);
+      else next.add(seq);
+      return next;
+    });
 
   return (
     <div className="flex flex-col gap-3">
+      {turns.length > 1 && (
+        <div className="flex justify-end gap-3 text-xs">
+          <button type="button" onClick={() => setCollapsed(new Set(turns.map((t) => t.seq)))} className="text-muted hover:text-fg">
+            Collapse all
+          </button>
+          <button type="button" onClick={() => setCollapsed(new Set())} className="text-muted hover:text-fg">
+            Expand all
+          </button>
+        </div>
+      )}
       {sessionEvents.length > 0 && (
         <details className="rounded-lg border border-line bg-panel">
           <summary className="px-3 py-1.5 font-mono text-xs text-muted">session events ({sessionEvents.length})</summary>
@@ -267,12 +287,20 @@ function Timeline({ session, events }: { session: Session; events: SessionEvent[
       )}
 
       {turns.map(({ seq, turn, events: tEvents }) => (
-        <section key={seq} className="rounded-lg border border-line bg-panel">
-          <div className="flex flex-wrap items-center gap-2 border-b border-line px-3 py-1.5">
+        <details
+          key={seq}
+          open={!collapsed.has(seq)}
+          onToggle={(e) => toggle(seq, e.currentTarget.open)}
+          className="group rounded-lg border border-line bg-panel"
+        >
+          <summary className="flex flex-wrap items-center gap-2 px-3 py-1.5 group-open:border-b group-open:border-line">
             <span className="font-mono text-xs text-fg">Turn {seq}</span>
             {turn && <StatusDot status={turn.status} className="text-xs" />}
             {turn?.usage && <UsageLine usage={turn.usage} />}
-          </div>
+            {turn && (
+              <span className="min-w-0 flex-1 basis-40 truncate text-xs text-muted group-open:hidden">{turn.prompt}</span>
+            )}
+          </summary>
           {turn && (
             <p className="border-b border-line bg-panel2 px-3 py-2 text-sm break-words whitespace-pre-wrap">
               <span className="mr-2 font-mono text-xs text-accent">prompt</span>
@@ -293,7 +321,7 @@ function Timeline({ session, events }: { session: Session; events: SessionEvent[
               {turn.error}
             </p>
           )}
-        </section>
+        </details>
       ))}
       {turns.length === 0 && sessionEvents.length === 0 && <p className="text-sm text-muted">No events yet.</p>}
     </div>
