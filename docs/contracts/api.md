@@ -1,7 +1,7 @@
 # HTTP API contract (v1)
 
 Base URL: `http://127.0.0.1:8080`. JSON in and out. Machine-readable spec: `GET /openapi.yaml`
-(OpenAPI 3.1, `internal/api/openapi.yaml`); interactive docs: `GET /docs` (Scalar). Tests fail if a
+(OpenAPI 3.1, `platform/internal/api/openapi.yaml`); interactive docs: `GET /docs` (Scalar). Tests fail if a
 REST route or response shape differs from the spec, so update it with every API change. Errors: `{"error": "<message>"}` with a 4xx/5xx
 status.
 
@@ -98,7 +98,7 @@ failures and lost sandboxes end as `failed`.
   "tokens_used": 12345,
   "token_budget": 2000000,
   // API-equivalent cost estimate in USD, computed by the gateway from list prices
-  // (config/pricing.yaml). Subscriptions are not billed per token; this is for comparison only.
+  // (platform/config/pricing.yaml). Subscriptions are not billed per token; this is for comparison only.
   "cost_usd": 0.42,
   // false if some requests used a model missing from the price table (cost_usd is then a lower bound)
   "cost_complete": true,

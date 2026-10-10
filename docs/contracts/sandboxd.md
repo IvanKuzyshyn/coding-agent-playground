@@ -33,11 +33,11 @@ Child env = sandboxd's env (minus `SANDBOXD_TOKEN`) + `env` from the request. `i
 A reader that sees `X-Command-State: exited` and gets an empty body at `X-Next-Offset` has read
 all output (the state is captured after the process's pipes are closed and logs flushed).
 
-## Agent image (`images/agent/Dockerfile`, built from the repo root)
+## Agent image (`platform/images/agent/Dockerfile`, built from `platform/`; Claude Code and Codex versions from `mise.toml`)
 
 - Base `node:24-bookworm-slim`; `git curl ca-certificates jq ripgrep python3 procps`.
 - Pinned `@anthropic-ai/claude-code@2.1.296` and `@openai/codex@0.162.1`.
-- `sandboxd` built from `cmd/sandboxd` in a Go build stage (static).
+- `sandboxd` built from `platform/cmd/sandboxd` in a Go build stage (static).
 - User `agent` uid/gid 1000, `HOME=/home/agent`, workdir `/home/agent/work`, `ENTRYPOINT ["/usr/local/bin/sandboxd"]`.
 - `/etc/claude-code/managed-settings.json`: `{"permissions":{"deny":["WebFetch","WebSearch"]}}`
   (defence in depth; the sandbox has no direct internet anyway).

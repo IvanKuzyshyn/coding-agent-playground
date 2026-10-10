@@ -1,8 +1,8 @@
 # Resilience and security drills
 
 Run live against the full Compose stack on 2026-10-10 (Docker Desktop 29.5.3, Claude Code 2.1.296,
-Codex 0.162.1). The automated equivalents are in `internal/ops`, `internal/supervisor`,
-`internal/gateway` and `internal/api` tests.
+Codex 0.162.1). The automated equivalents are in `platform/internal/ops`, `platform/internal/supervisor`,
+`platform/internal/gateway` and `platform/internal/api` tests.
 
 | # | Drill | How | Result |
 |---|---|---|---|

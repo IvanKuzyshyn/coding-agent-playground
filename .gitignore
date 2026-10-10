@@ -9,13 +9,10 @@ docs/initial-design/*.png
 .env.*
 
 # Go
-/bin/
+platform/bin/
 
 # Next.js
 web/node_modules/
 web/.next/
 web/out/
-
-# Spike-generated placeholder credentials
-spikes/*/.generated/
 

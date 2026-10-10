@@ -2,8 +2,8 @@ name: terrarium
 
 x-control-plane: &control-plane
   build:
-    context: ..
-    dockerfile: deploy/Dockerfile
+    context: ../platform
+    dockerfile: ../deploy/Dockerfile
   image: terrarium-control-plane:local
   environment: &cp-env
     DATABASE_URL: postgres://terrarium:terrarium@postgres:5432/terrarium?sslmode=disable
@@ -47,7 +47,7 @@ services:
     secrets: [session_key]
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - ../config:/etc/terrarium:ro
+      - ../platform/config:/etc/terrarium:ro
     ports: ["127.0.0.1:8080:8080"]
     networks: [default, sandbox]
     depends_on: { postgres: { condition: service_healthy } }
@@ -64,7 +64,7 @@ services:
     volumes:
       # Dedicated Codex login owned by the gateway (`make codex-login`). Never the host's ~/.codex.
       - ${HOME}/.terrarium/codex:/var/lib/terrarium/codex
-      - ../config/pricing.yaml:/etc/terrarium/pricing.yaml:ro
+      - ../platform/config/pricing.yaml:/etc/terrarium/pricing.yaml:ro
     networks: [default, sandbox]
     depends_on: { postgres: { condition: service_healthy } }
     healthcheck:

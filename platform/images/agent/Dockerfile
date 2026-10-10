@@ -1,5 +1,5 @@
-# Sandbox image: Claude Code, Codex and sandboxd. Build from the repo root:
-#   docker build -t terrarium-agent:local -f images/agent/Dockerfile .
+# Sandbox image: Claude Code, Codex and sandboxd. Build context: platform/. The harness versions
+# come from mise.toml (the same pins as the host CLIs): `mise run image-agent`.
 
 FROM golang:1.27-bookworm AS sandboxd
 WORKDIR /src
@@ -10,8 +10,10 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o /out/sandboxd ./cmd/san
 
 FROM node:24-bookworm-slim
 
-ARG CLAUDE_CODE_VERSION=2.1.296
-ARG CODEX_VERSION=0.162.1
+ARG CLAUDE_CODE_VERSION
+ARG CODEX_VERSION
+RUN test -n "$CLAUDE_CODE_VERSION" && test -n "$CODEX_VERSION" \
+ || { echo "CLAUDE_CODE_VERSION and CODEX_VERSION are required (pinned in mise.toml)" >&2; exit 1; }
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends git curl ca-certificates jq ripgrep python3 procps \

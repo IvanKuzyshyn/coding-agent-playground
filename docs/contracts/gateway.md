@@ -2,11 +2,11 @@
 
 `terrarium gateway` holds the only real credentials. Sandboxes reach it at `gateway:8080`
 (inference) and `gateway:3128` (CONNECT proxy) on the internal `terrarium-sandbox` network.
-Validated by `spikes/s1-claude-swap` and `spikes/s2-codex-swap`; reuse their findings.
+Validated by spikes S1 and S2 (results: `docs/plan/local-prototype-plan.md` §5.2–5.3).
 
 ## Session resolution
 
-Every request carries the per-session secret in one of these forms (`internal/credentials`):
+Every request carries the per-session secret in one of these forms (`platform/internal/credentials`):
 
 | Where | Form | Extract with |
 |---|---|---|

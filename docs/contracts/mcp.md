@@ -4,7 +4,7 @@ The server exposes the session operations of the [HTTP API](api.md) as MCP tools
 (Claude Code, Codex, Cursor…) can start, follow and end Terrarium sessions.
 
 - Endpoint: `POST http://127.0.0.1:8080/mcp`, Streamable HTTP, stateless (no `Mcp-Session-Id`),
-  JSON responses. Same process and port as the REST API (`internal/api/mcp.go`, go-sdk v1.8).
+  JSON responses. Same process and port as the REST API (`platform/internal/api/mcp.go`, go-sdk v1.8).
 - Auth: `Authorization: Bearer <user token>` (from `POST /login` or the web UI's user menu),
   verified like the REST API; missing or unknown → `401`. Sessions created over MCP belong to that
   user and appear in the web UI.

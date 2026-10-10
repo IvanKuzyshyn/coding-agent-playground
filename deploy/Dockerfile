@@ -1,3 +1,5 @@
+# Control-plane image (terrarium server|gateway|migrate). Build context: platform/
+#   docker build -t terrarium-control-plane:local -f deploy/Dockerfile platform
 FROM golang:1.27-bookworm AS build
 WORKDIR /src
 COPY go.mod go.sum ./

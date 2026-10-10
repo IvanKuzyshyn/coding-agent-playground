@@ -11,7 +11,7 @@ architecture.
 |---|---|---|
 | Claude Max OAuth token | Gateway container only (compose secret from the host keychain) | Sandboxes, logs, the database |
 | Codex ChatGPT login (access + refresh token) | Gateway container only (`~/.terrarium/codex`, a login dedicated to the gateway) | Sandboxes, logs, the database |
-| Engineer's GitHub token | Gateway container only (compose secret from the host keychain, `make credentials`) | Sandboxes, logs, the database |
+| Engineer's GitHub token | Gateway container only (compose secret from the host keychain, `mise run credentials`) | Sandboxes, logs, the database |
 | Session key (derives per-session gateway secrets) | Server container only (compose secret) | Sandboxes, gateway, database |
 | User API tokens | Derived from the server's session key (HMAC of the user name); the database stores sha256 only; the web UI keeps it in an encrypted httpOnly cookie | Browser JS, other engineers |
 | Subscription quota | Upstream vendors | Runaway or hijacked agents |

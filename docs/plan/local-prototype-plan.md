@@ -178,7 +178,7 @@ CREATE TABLE session_events (                  -- logs, lifecycle, egress decisi
 ## 3. HTTP API
 
 All endpoints need `Authorization: Bearer <engineer token>`. Tokens come from a local file
-(`config/engineers.yaml`, hashed). A session is visible only to its owner.
+(`platform/config/engineers.yaml`, hashed). A session is visible only to its owner.
 
 | Method | Path | Purpose |
 |---|---|---|
@@ -263,13 +263,13 @@ supervisor runs; it takes a Postgres advisory lock at start so a second copy wai
 
 | Now | With Temporal |
 |---|---|
-| §4.1 operations in `internal/ops` | Registered as activities unchanged |
-| State transitions in `internal/session/machine.go` (pure function: state + event → state + ops) | Workflow code calls the same function |
+| §4.1 operations in `platform/internal/ops` | Registered as activities unchanged |
+| State transitions in `platform/internal/session/machine.go` (pure function: state + event → state + ops) | Workflow code calls the same function |
 | Reconcile loop drives ops | `SessionWorkflow` per session; follow-up / stop / delete become signals; deadlines become timers |
 | Tail goroutine heartbeat (log offset) | Activity heartbeat details |
 | Orphan sweep | Kept as a Temporal Schedule |
 
-Rule: no package outside `internal/supervisor` knows that a loop drives the ops. Swapping the
+Rule: no package outside `platform/internal/supervisor` knows that a loop drives the ops. Swapping the
 driver touches only that package and its wiring.
 
 ---
@@ -281,7 +281,7 @@ driver touches only that package and its wiring.
 The sandbox is attacker-controlled. It holds only per-session placeholders. The gateway maps a
 placeholder to a session, checks the session is `idle|running`, enforces its token budget, and
 swaps in the real credential. Real credentials live only in the gateway container, loaded from the
-host keychain or password manager at `make up`.
+host keychain or password manager at `mise run up`.
 
 ### 5.2 Claude Code (Max)
 
@@ -303,7 +303,7 @@ host keychain or password manager at `make up`.
   WebFetch with a managed-settings deny rule.
 - **Spike S1 result (2026-10-10): works.** Placeholder accepted at startup, two-turn resume on the
   Max token, real token absent from sandbox env, filesystem and logs. See
-  `spikes/s1-claude-swap/README.md`.
+  the S1 spike (its code has since been removed; `platform/internal/gateway` replaced it).
 
 ### 5.3 Codex (ChatGPT Plus)
 
@@ -323,7 +323,7 @@ host keychain or password manager at `make up`.
   them. Single-flight refresh against `auth.openai.com` with write-back; access tokens last ~10
   days.
 - **Spike S2 result (2026-10-10): works.** Forged JWTs accepted, two-turn resume on the Plus login,
-  real token absent from sandbox env, filesystem and logs. See `spikes/s2-codex-swap/README.md`.
+  real token absent from sandbox env, filesystem and logs. (Spike code since removed.)
 
 ### 5.4 Terms risk (documented, not hidden)
 
