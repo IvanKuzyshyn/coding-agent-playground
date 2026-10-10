@@ -161,7 +161,7 @@ func (g *Gateway) serveInference(w http.ResponseWriter, r *http.Request) {
 	// can ever match.
 	if !ok || r.URL.RawPath != "" {
 		slog.Info("inference route denied", "method", r.Method, "path", truncate(r.URL.Path))
-		if secret, ok := credentials.SecretFromBearer(r.Header.Get("Authorization")); ok {
+		if secret, ok := credentials.SecretFromBearer(r.Header.Get("Authorization")); ok && !expectedCodexChatter(r.URL.Path) {
 			if s, err := g.Store.GatewaySessionBySecretHash(ctx, credentials.Hash(secret)); err == nil {
 				g.denyInference(ctx, s.ID, r, "route")
 			}
@@ -240,6 +240,26 @@ func (g *Gateway) hasCredential(harness string) bool {
 		return ok
 	}
 	return g.codex.available()
+}
+
+// Codex calls these chatgpt_base_url endpoints on every run (plugins, settings, account check;
+// spikes/s2-codex-swap) and works without them. They are denied but not recorded as egress
+// events, so the engineer's egress view shows only unexpected attempts.
+var codexChatterPrefixes = []string{
+	"/chatgpt/ps/plugins/",
+	"/chatgpt/plugins/",
+	"/chatgpt/api/codex/accounts/check",
+	"/chatgpt/api/codex/settings/user",
+	"/chatgpt/api/codex/ps/mcp",
+}
+
+func expectedCodexChatter(path string) bool {
+	for _, p := range codexChatterPrefixes {
+		if strings.HasPrefix(path, p) {
+			return true
+		}
+	}
+	return false
 }
 
 func (g *Gateway) denyInference(ctx context.Context, id uuid.UUID, r *http.Request, reason string) {
