@@ -27,6 +27,22 @@ sandbox, with a gateway swapping a placeholder for it? See `docs/plan/local-prot
 | Same with `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1` | Zero direct calls. Only `/v1/messages` through the gateway |
 | Token scope | Debug log: env-var / setup-token sessions have `user:inference` only; `/api/oauth/validate`-gated features (Claude in Chrome) are disabled |
 
+### Gateway hardening after review
+
+The first version attached the real token to any `api.anthropic.com` path. If the token's scope
+allows more than inference, a sandbox could call account endpoints (e.g. mint an API key). Fixes:
+
+| Check (placeholder bearer from the sandbox) | Result |
+|---|---|
+| `POST /v1/messages?beta=true` | forwarded (upstream `401` with the fake token) |
+| `GET /api/oauth/profile`, `POST /api/oauth/claude_cli/create_api_key` | `403` at the gateway |
+| `/v1/messages/../../api/...` (raw and percent-encoded) | `403` |
+| `GET /v1/messages` (wrong method) | `403` |
+| `CONNECT api.anthropic.com:8443` with the host allowlisted | refused (port must be 443) |
+| DNS for external names inside the sandbox | no resolution (no DNS exfil path on this Docker version) |
+
+Forwarded routes are an exact allowlist: `POST /v1/messages`, `POST /v1/messages/count_tokens`.
+
 ## Phase 2: real token
 
 Store the token from `claude setup-token` in the keychain, then run `./run-real.sh`. It checks:

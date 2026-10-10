@@ -38,6 +38,11 @@ func main() {
 	}
 }
 
+var allowedRoutes = map[string]bool{
+	"POST /anthropic/v1/messages":              true,
+	"POST /anthropic/v1/messages/count_tokens": true,
+}
+
 func inferenceProxy(placeholder, real string) http.Handler {
 	upstream, _ := url.Parse("https://api.anthropic.com")
 	rp := &httputil.ReverseProxy{
@@ -65,8 +70,11 @@ func inferenceProxy(placeholder, real string) http.Handler {
 			"user_agent", r.Header.Get("User-Agent"),
 			"headers", headerNames(r.Header),
 		)
-		if !strings.HasPrefix(r.URL.Path, "/anthropic/") && r.URL.Path != "/anthropic" {
-			http.Error(w, "unknown route", http.StatusNotFound)
+		// The real token may carry more than inference scope, so only exact inference routes get it.
+		// RawPath must be empty so encoded or dot-segment paths can never match.
+		if r.URL.RawPath != "" || !allowedRoutes[r.Method+" "+r.URL.Path] {
+			slog.Info("inference route denied", "method", r.Method, "path", r.URL.Path)
+			http.Error(w, "route not allowed", http.StatusForbidden)
 			return
 		}
 		// Fail closed: only requests carrying the session placeholder get the real credential.
@@ -102,8 +110,8 @@ func connectProxy(allow []string) http.Handler {
 			http.Error(w, "only CONNECT is supported", http.StatusForbidden)
 			return
 		}
-		hostname, _, _ := net.SplitHostPort(host)
-		if !slices.Contains(allow, hostname) {
+		hostname, port, err := net.SplitHostPort(host)
+		if err != nil || port != "443" || !slices.Contains(allow, hostname) {
 			slog.Info("egress denied", "kind", "connect", "host", host)
 			http.Error(w, "host not allowed", http.StatusForbidden)
 			return
@@ -120,12 +128,17 @@ func connectProxy(allow []string) http.Handler {
 			http.Error(w, "hijack unsupported", http.StatusInternalServerError)
 			return
 		}
-		client, _, err := hj.Hijack()
+		client, buf, err := hj.Hijack()
 		if err != nil {
 			upstream.Close()
 			return
 		}
 		_, _ = client.Write([]byte("HTTP/1.1 200 Connection Established\r\n\r\n"))
+		// The client may have sent the start of its TLS handshake before reading our 200.
+		if n := buf.Reader.Buffered(); n > 0 {
+			early, _ := buf.Reader.Peek(n)
+			_, _ = upstream.Write(early)
+		}
 		go pipe(upstream, client)
 		pipe(client, upstream)
 	})
