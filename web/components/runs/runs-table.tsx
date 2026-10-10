@@ -79,25 +79,25 @@ export function RunsTable({ sessions, query, update, open, hrefFor, activeId }: 
                   activeId === s.id ? "bg-panel2" : ""
                 }`}
               >
-                <td className="px-3 py-2.5 align-top">
+                <td className="px-3 py-2.5 align-middle">
                   <LocalTime iso={s.created_at} className="block whitespace-nowrap text-fg" />
                   <span className="text-xs text-muted">
                     <RelTime iso={s.created_at} />
                   </span>
                 </td>
-                <td className="px-3 py-2.5 align-top">
+                <td className="px-3 py-2.5 align-middle">
                   <StatusDot status={s.display_status} />
                 </td>
-                <td className="max-w-0 px-3 py-2.5 align-top">
+                <td className="max-w-0 px-3 py-2.5 align-middle">
                   <RunName s={s} href={hrefFor(s.id)} onClick={(e) => onLink(e, s.id)} />
                 </td>
-                <td className="px-3 py-2.5 align-top">
+                <td className="px-3 py-2.5 align-middle">
                   <HarnessIcon harness={s.harness} />
                 </td>
-                <td className="px-3 py-2.5 align-top text-fg">
+                <td className="px-3 py-2.5 align-middle text-fg">
                   <LiveDuration session={s} />
                 </td>
-                <td className="px-3 py-2.5 align-top">
+                <td className="px-3 py-2.5 align-middle">
                   <Cost session={s} />
                 </td>
               </tr>
