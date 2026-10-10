@@ -37,7 +37,7 @@ by `id` only). `prompt` non-empty, ≤ 100 KB. `repo` is `owner/name` (public Gi
 | `q` | case-insensitive substring of `name` | – |
 | `status` | comma-separated `display_status` values: `pending`, `provisioning`, `idle`, `running`, `stopping`, `stopped`, `failed` | all |
 | `harness` | comma-separated `claude-code`, `codex` | all |
-| `sort` | `created_at`, `duration`, `cost`, `tokens`, `name`, `status` | `created_at` |
+| `sort` | `created_at`, `duration`, `cost`, `tokens`, `name`, `status` (lifecycle order: pending, provisioning, idle, running, stopping, stopped, failed) | `created_at` |
 | `order` | `asc`, `desc` | `desc` |
 | `limit` | 1–200 | 50 |
 | `offset` | ≥ 0 | 0 |

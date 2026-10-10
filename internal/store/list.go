@@ -27,7 +27,9 @@ var sortColumns = map[string]string{
 	"cost":       "s.cost_usd",
 	"tokens":     "s.tokens_used",
 	"name":       "lower(s.name)",
-	"status":     DisplayStatusSQL,
+	// Lifecycle order rather than alphabetical.
+	"status": `CASE ` + DisplayStatusSQL + ` WHEN 'pending' THEN 1 WHEN 'provisioning' THEN 2 WHEN 'idle' THEN 3
+		WHEN 'running' THEN 4 WHEN 'stopping' THEN 5 WHEN 'stopped' THEN 6 ELSE 7 END`,
 }
 
 func ValidSort(key string) bool { _, ok := sortColumns[key]; return ok }
