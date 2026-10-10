@@ -201,8 +201,8 @@ func (tl *tail) enforce(ctx context.Context) error {
 }
 
 func ignoreExited(err error) error {
-	// sandboxd answers 409 when the process already exited; the next log read observes it.
-	if err != nil && strings.Contains(err.Error(), "409") {
+	// The process may exit between the log read and the signal; the next log read observes it.
+	if errors.Is(err, sandboxclient.ErrExited) {
 		return nil
 	}
 	return err

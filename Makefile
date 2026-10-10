@@ -7,6 +7,7 @@ CODEX_HOME_DIR := $(HOME)/.terrarium/codex
 
 up: image-agent ## Start postgres, server and gateway
 	@mkdir -p $(CODEX_HOME_DIR)
+	@test -f $(HOME)/.terrarium/session.key || (umask 077 && openssl rand -hex 32 > $(HOME)/.terrarium/session.key)
 	TERRARIUM_CLAUDE_OAUTH_TOKEN="$(CLAUDE_TOKEN)" $(COMPOSE) up -d --build --wait postgres server gateway
 
 deps-up: ## Start postgres only

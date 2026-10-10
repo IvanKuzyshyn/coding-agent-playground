@@ -35,6 +35,7 @@ services:
     # Creates sandboxes through the Docker socket. Socket access is root-equivalent on the host;
     # in the real setup this moves to a sandbox runtime API (see threat model).
     user: root
+    secrets: [session_key]
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ../config:/etc/terrarium:ro
@@ -61,6 +62,9 @@ services:
       retries: 30
 
 secrets:
+  session_key:
+    # Derives per-session gateway secrets; created once by `make up`.
+    file: ${HOME}/.terrarium/session.key
   claude_oauth_token:
     # Filled from the macOS keychain by the Makefile; never written to disk in the repo.
     environment: TERRARIUM_CLAUDE_OAUTH_TOKEN
