@@ -268,7 +268,13 @@ func (o *Ops) finishTurn(ctx context.Context, s store.Session, t store.Turn, tl 
 	case tl.final.Failed:
 		status, errMsg = session.TurnFailed, tl.final.Error
 	}
-	finished, err := o.Store.FinishTurn(ctx, s.ID, t.Seq, status, tl.lastMessage, errMsg, usage)
+	result := tl.lastMessage
+	if status == session.TurnComplete {
+		if reason, rest, failed := harness.ReportedFailure(result); failed {
+			status, errMsg, result = session.TurnFailed, "agent reported failure: "+reason, rest
+		}
+	}
+	finished, err := o.Store.FinishTurn(ctx, s.ID, t.Seq, status, result, errMsg, usage)
 	if err != nil {
 		return err
 	}

@@ -81,10 +81,49 @@ type File struct {
 	Mode uint32
 }
 
-// publishGuide is the harness's user-level memory file (CLAUDE.md / AGENTS.md) for sessions with
-// a repository: how to publish work within what the gateway allows.
-func publishGuide(spec session.Spec, sessionID string) string {
-	return fmt.Sprintf(`# Publishing changes
+// OutcomeMarker starts the line an agent ends its final reply with when it could not complete
+// the task. A harness exits normally either way, so this is the only failure signal for it.
+const OutcomeMarker = "TERRARIUM_OUTCOME: failed"
+
+const outcomeGuide = `# Reporting the outcome
+
+If you could not complete the task (for example a host is unreachable, access is denied, or
+required information is unavailable), make the last line of your final reply exactly:
+
+` + OutcomeMarker + ` - <one-line reason>
+
+Do not add this line when the task is done.
+`
+
+// ReportedFailure finds the outcome marker on the last non-empty line of a final reply. It
+// returns the reason and the reply without the marker line.
+func ReportedFailure(reply string) (reason, rest string, failed bool) {
+	trimmed := strings.TrimRight(reply, " \t\r\n")
+	i := strings.LastIndex(trimmed, "\n")
+	last := strings.TrimSpace(trimmed[i+1:])
+	after, ok := strings.CutPrefix(last, OutcomeMarker)
+	if !ok {
+		return "", reply, false
+	}
+	reason = strings.TrimSpace(strings.TrimLeft(after, " -–—:"))
+	if reason == "" {
+		reason = "no reason given"
+	}
+	if i < 0 {
+		return reason, "", true
+	}
+	return reason, strings.TrimRight(trimmed[:i], " \t\r\n"), true
+}
+
+// agentGuide is the harness's user-level memory file (CLAUDE.md / AGENTS.md): how to report a
+// failed task and, for sessions with a repository, how to publish work within what the gateway
+// allows.
+func agentGuide(spec session.Spec, sessionID string) string {
+	if spec.Repo == "" {
+		return outcomeGuide
+	}
+	return outcomeGuide + fmt.Sprintf(`
+# Publishing changes
 
 Only when the user asks you to push or open a pull request:
 
@@ -98,14 +137,11 @@ No other GitHub repository or API is reachable.
 
 // SetupFiles returns harness configuration files. lastRefresh is an RFC3339 timestamp.
 func SetupFiles(sessionID string, spec session.Spec, gw Gateway, secret, lastRefresh string) []File {
-	var files []File
-	if spec.Repo != "" {
-		path := Home + "/.claude/CLAUDE.md"
-		if spec.Harness == session.HarnessCodex {
-			path = Home + "/.codex/AGENTS.md"
-		}
-		files = append(files, File{Path: path, Data: []byte(publishGuide(spec, sessionID)), Mode: 0o644})
+	path := Home + "/.claude/CLAUDE.md"
+	if spec.Harness == session.HarnessCodex {
+		path = Home + "/.codex/AGENTS.md"
 	}
+	files := []File{{Path: path, Data: []byte(agentGuide(spec, sessionID)), Mode: 0o644}}
 	if spec.Harness != session.HarnessCodex {
 		return files
 	}

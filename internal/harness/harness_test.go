@@ -111,8 +111,29 @@ func TestSetupFilesPublishGuide(t *testing.T) {
 		if len(files) == 0 || files[0].Path != path || !strings.Contains(string(files[0].Data), "terrarium/sid/") {
 			t.Errorf("%s: %+v", harness, files)
 		}
-		if files := SetupFiles("sid", session.Spec{Harness: harness}, gw, strings.Repeat("a", 64), ""); len(files) > 0 && strings.HasSuffix(files[0].Path, ".md") {
-			t.Errorf("%s: guide written without a repo", harness)
+		files = SetupFiles("sid", session.Spec{Harness: harness}, gw, strings.Repeat("a", 64), "")
+		if guide := string(files[0].Data); files[0].Path != path || !strings.Contains(guide, OutcomeMarker) || strings.Contains(guide, "terrarium-pr") {
+			t.Errorf("%s without a repo: %s", harness, guide)
+		}
+	}
+}
+
+func TestReportedFailure(t *testing.T) {
+	cases := []struct {
+		reply, reason, rest string
+		failed              bool
+	}{
+		{"Done.", "", "Done.", false},
+		{"I could not reach it.\n\nTERRARIUM_OUTCOME: failed - wttr.in is not reachable\n", "wttr.in is not reachable", "I could not reach it.", true},
+		{"TERRARIUM_OUTCOME: failed: denied", "denied", "", true},
+		{"Sorry.\nTERRARIUM_OUTCOME: failed", "no reason given", "Sorry.", true},
+		// Only the last line counts: quoting the marker mid-reply is not a failure.
+		{"Use TERRARIUM_OUTCOME: failed when stuck.\nAll good.", "", "Use TERRARIUM_OUTCOME: failed when stuck.\nAll good.", false},
+	}
+	for _, c := range cases {
+		reason, rest, failed := ReportedFailure(c.reply)
+		if reason != c.reason || rest != c.rest || failed != c.failed {
+			t.Errorf("%q: got (%q, %q, %v)", c.reply, reason, rest, failed)
 		}
 	}
 }

@@ -61,6 +61,12 @@ When a turn ends and no follow-up is queued, the session's `lifecycle` rule for 
 | `failed`, `limit_exceeded` | `on_failure` | session `failed` (error = turn error) | `idle` |
 | `stopped` (engineer) | `on_stop` | session `stopped` | `idle` |
 
+A harness exits normally even when it could not do the task, so the agent reports that itself:
+every sandbox's `CLAUDE.md` / `AGENTS.md` tells it to end its final reply with
+`TERRARIUM_OUTCOME: failed - <reason>` in that case. A turn whose reply ends with that line is
+`failed` with error `agent reported failure: <reason>`, and the line is removed from `result`.
+This is a convention the agent follows, not a guarantee: an agent can still claim success.
+
 Preset defaults: `on_complete: terminate`, `on_failure: terminate`, `on_stop: keep_idle`. A queued
 follow-up always runs first. A session ended by `DELETE`, idle timeout or TTL gets the outcome of
 its last finished turn (`complete` / `failed`), or `stopped` if none finished. Provisioning

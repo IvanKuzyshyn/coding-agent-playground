@@ -121,3 +121,21 @@ func TestQueuedFollowUpRunsBeforeCompletion(t *testing.T) {
 		t.Errorf("follow-up turn %s, want complete", tn.Status)
 	}
 }
+
+func TestAgentReportedFailureFailsTurnAndSession(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t)
+	result := `{"type":"result","subtype":"success","is_error":false,"result":"No access.\nTERRARIUM_OUTCOME: failed - wttr.in is blocked","num_turns":1,"session_id":"be35dd33-1b7b-415f-865d-7ad0fe2e22ab"}`
+	e.fleet.Program = turns(testutil.Program{testutil.Line(testutil.ClaudeInit), testutil.Line(result), testutil.Exit(0)})
+	e.start(t)
+	s := testutil.CreateSession(t, e.st, "alice", specWith(defaultLifecycle), "weather?")
+
+	s = e.waitStatus(t, s.ID, session.StatusFailed)
+	tn := testutil.MustTurn(t, e.st, s.ID, 1)
+	if tn.Status != session.TurnFailed || tn.Error != "agent reported failure: wttr.in is blocked" || tn.Result != "No access." {
+		t.Errorf("turn: status %s error %q result %q", tn.Status, tn.Error, tn.Result)
+	}
+	if !strings.Contains(s.Error, "agent reported failure") || e.fleet.Exists(s.ID) {
+		t.Errorf("session error %q, sandbox exists %v", s.Error, e.fleet.Exists(s.ID))
+	}
+}

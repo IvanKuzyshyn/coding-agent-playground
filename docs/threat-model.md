@@ -68,6 +68,7 @@ The platform does not try to detect injection; it limits what an injected agent 
 | Agent cannot widen its own permissions | Demonstrated | Spec frozen at creation; gateway and supervisor read only the frozen spec |
 | Tool-level deny rules (e.g. WebFetch) | Demonstrated | `/etc/claude-code/managed-settings.json` in the image |
 | Output review: agent changes land only as PRs | Design | §3.4 |
+| Task outcome is self-reported | Residual | A turn is `failed` when the agent ends its reply with `TERRARIUM_OUTCOME: failed`; an injected agent can omit it, so `complete` means "the agent claims success". Egress denials remain visible either way |
 
 ### 3.2 Credential theft
 
