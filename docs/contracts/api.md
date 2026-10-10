@@ -1,4 +1,4 @@
-# HTTP API contract (v0)
+# HTTP API contract (v1)
 
 Base URL: `http://127.0.0.1:8080`. JSON in and out. Errors: `{"error": "<message>"}` with a 4xx/5xx
 status.
@@ -14,8 +14,9 @@ as if it does not exist (`404`).
 | `GET` | `/healthz` | – | `200 {"ok":true}` |
 | `GET` | `/whoami` | – | `200 {"name":"alice"}` |
 | `GET` | `/presets` | – | `200 {"presets":[{"name":"default"},{"name":"explore"}]}` |
-| `POST` | `/sessions` | `{"harness":"claude-code"\|"codex", "prompt":"...", "repo":"owner/name"?, "preset":"default"?, "model":"..."?}` | `202 Session` |
-| `GET` | `/sessions` | – | `200 {"sessions":[Session]}` newest first, without `turns` |
+| `POST` | `/sessions` | `{"name":"...", "harness":"claude-code"\|"codex", "prompt":"...", "repo":"owner/name"?, "preset":"default"?, "model":"..."?}` | `202 Session` |
+| `GET` | `/sessions` | query: see [Listing](#listing) | `200 {"sessions":[Session], "total": <matching count>}` without `turns` |
+| `GET` | `/stats` | – | `200 Stats` for the caller's sessions |
 | `GET` | `/sessions/{id}` | – | `200 Session` with `turns` |
 | `POST` | `/sessions/{id}/turns` | `{"prompt":"..."}` | `202 Turn` (status `queued`); `409` if the session is not `pending`/`provisioning`/`idle`/`running` |
 | `POST` | `/sessions/{id}/turns/current/stop` | – | `202 {}`; `409` if no turn is running |
@@ -23,8 +24,25 @@ as if it does not exist (`404`).
 | `GET` | `/sessions/{id}/events` | query `after`, `kind`, `limit` (default 500, max 1000) | `200 {"events":[Event],"next_after":<id>}` |
 | `GET` | `/sessions/{id}/events` with `Accept: text/event-stream` | query `after` or header `Last-Event-ID` | SSE stream (below) |
 
-Validation: `prompt` non-empty, ≤ 100 KB. `repo` is `owner/name` (public GitHub repo, cloned into
+Validation: `name` required, 1–120 characters after trimming, not unique (sessions are identified
+by `id` only). `prompt` non-empty, ≤ 100 KB. `repo` is `owner/name` (public GitHub repo, cloned into
 `/home/agent/work`). Creating a session beyond the per-engineer active-session cap → `429`.
+
+## Listing
+
+`GET /sessions` query parameters (all optional, combinable):
+
+| Param | Values | Default |
+|---|---|---|
+| `q` | case-insensitive substring of `name` | – |
+| `status` | comma-separated `display_status` values: `pending`, `provisioning`, `idle`, `running`, `stopping`, `stopped`, `failed` | all |
+| `harness` | comma-separated `claude-code`, `codex` | all |
+| `sort` | `created_at`, `duration`, `cost`, `tokens`, `name`, `status` | `created_at` |
+| `order` | `asc`, `desc` | `desc` |
+| `limit` | 1–200 | 50 |
+| `offset` | ≥ 0 | 0 |
+
+Unknown values → `400`. `total` is the number of sessions matching the filters (for pagination).
 
 ## Objects
 
@@ -33,13 +51,24 @@ Validation: `prompt` non-empty, ≤ 100 KB. `repo` is `owner/name` (public GitHu
 {
   "id": "uuid",
   "owner": "alice",
+  "name": "fix flaky test",
   "status": "pending|provisioning|idle|running|stopping|stopped|failed",
+  // status, except a session that ended because of an error shows "failed" even after cleanup
+  // moved it to "stopped". Filters use this.
+  "display_status": "pending|provisioning|idle|running|stopping|stopped|failed",
   "harness": "claude-code|codex",
   "preset": "default",
   "repo": "owner/name",            // omitted if none
   "model": "...",                  // omitted if harness default
   "tokens_used": 12345,
   "token_budget": 2000000,
+  // API-equivalent cost estimate in USD, computed by the gateway from list prices
+  // (config/pricing.yaml). Subscriptions are not billed per token; this is for comparison only.
+  "cost_usd": 0.42,
+  // false if some requests used a model missing from the price table (cost_usd is then a lower bound)
+  "cost_complete": true,
+  // seconds from created_at to ended_at, or to now while the session is not stopped
+  "duration_seconds": 312,
   "error": "...",                  // omitted if none
   "created_at": "RFC3339", "updated_at": "RFC3339", "expires_at": "RFC3339",
   "idle_until": "RFC3339",         // omitted if none
@@ -47,6 +76,15 @@ Validation: `prompt` non-empty, ≤ 100 KB. `repo` is `owner/name` (public GitHu
   "turn_count": 2,
   "current_turn": 2,               // seq of the queued/running turn, omitted if none
   "turns": [Turn]                  // only on GET /sessions/{id}
+}
+
+// Stats (caller's sessions)
+{
+  "total": 39,          // all sessions ever created
+  "running": 2,         // display_status running (a turn is executing)
+  "active": 5,          // not stopped (pending, provisioning, idle, running, stopping)
+  "failed": 3,          // display_status failed
+  "failure_rate": 0.0769 // failed / ended sessions (stopped + failed); 0 when none ended
 }
 
 // Turn
