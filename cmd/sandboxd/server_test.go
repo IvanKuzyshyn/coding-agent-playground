@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -12,6 +11,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	. "github.com/onsi/gomega"
 
 	"terrarium/internal/sandboxclient"
 )
@@ -102,57 +103,49 @@ func exitCodeOf(t *testing.T, c sandboxclient.Command) int {
 }
 
 func TestHealthNoAuth(t *testing.T) {
+	g := NewWithT(t)
 	f := newFixture(t)
-	if err := sandboxclient.New(f.url, "", nil).Health(context.Background()); err != nil {
-		t.Fatal(err)
-	}
+	g.Expect(sandboxclient.New(f.url, "", nil).Health(context.Background())).To(Succeed())
 }
 
 func TestAuthRequired(t *testing.T) {
+	g := NewWithT(t)
 	f := newFixture(t)
-	for _, auth := range []string{"", "Bearer wrong", "Bearer " + testToken + "x", testToken} {
+	// Cases are identified by index so a failure never prints the token.
+	for i, auth := range []string{"", "Bearer wrong", "Bearer " + testToken + "x", testToken} {
 		req, _ := http.NewRequest(http.MethodGet, f.url+"/commands/x", nil)
 		if auth != "" {
 			req.Header.Set("Authorization", auth)
 		}
 		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatal(err)
-		}
+		g.Expect(err).NotTo(HaveOccurred())
 		resp.Body.Close()
-		if resp.StatusCode != http.StatusUnauthorized {
-			t.Errorf("auth %q: status %d, want 401", auth, resp.StatusCode)
-		}
+		g.Expect(resp.StatusCode).To(Equal(http.StatusUnauthorized), "auth case %d", i)
 	}
 	bad := sandboxclient.New(f.url, "wrong", nil)
-	if _, err := bad.StartCommand(context.Background(), sandboxclient.CommandRequest{ID: "a", Argv: []string{"true"}}); err == nil || !strings.Contains(err.Error(), "401") {
-		t.Errorf("start with wrong token: %v", err)
-	}
+	_, err := bad.StartCommand(context.Background(), sandboxclient.CommandRequest{ID: "a", Argv: []string{"true"}})
+	g.Expect(err).To(MatchError(ContainSubstring("401")), "start with wrong token")
 }
 
 func TestEnvExcludesToken(t *testing.T) {
+	g := NewWithT(t)
 	f := newFixture(t)
 	ctx := context.Background()
 	_, err := f.client.StartCommand(ctx, sandboxclient.CommandRequest{
 		ID: "env", Argv: []string{"env"}, Env: map[string]string{"EXTRA": "yes"},
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	g.Expect(err).NotTo(HaveOccurred())
 	f.waitExit(t, "env")
 	out := f.readAll(t, "env", "stdout")
-	if strings.Contains(out, tokenEnv) || strings.Contains(out, testToken) {
-		t.Errorf("child env leaks token:\n%s", out)
-	}
-	if !strings.Contains(out, "EXTRA=yes\n") {
-		t.Errorf("request env missing:\n%s", out)
-	}
-	if !strings.Contains(out, "PATH=") {
-		t.Errorf("base env missing:\n%s", out)
-	}
+	// Assert on booleans so a failure does not print the env (and with it the token).
+	g.Expect(strings.Contains(out, tokenEnv)).To(BeFalse(), "child env leaks token variable")
+	g.Expect(strings.Contains(out, testToken)).To(BeFalse(), "child env leaks token")
+	g.Expect(out).To(ContainSubstring("EXTRA=yes\n"), "request env missing")
+	g.Expect(out).To(ContainSubstring("PATH="), "base env missing")
 }
 
 func TestExitCodesAndCwd(t *testing.T) {
+	g := NewWithT(t)
 	f := newFixture(t)
 	ctx := context.Background()
 	cases := []struct {
@@ -168,25 +161,21 @@ func TestExitCodesAndCwd(t *testing.T) {
 		{"cwd", []string{"pwd"}, "", 0},
 	}
 	for _, c := range cases {
-		if _, err := f.client.StartCommand(ctx, sandboxclient.CommandRequest{ID: c.id, Argv: c.argv, Cwd: c.cwd}); err != nil {
-			t.Fatalf("%s: %v", c.id, err)
-		}
+		_, err := f.client.StartCommand(ctx, sandboxclient.CommandRequest{ID: c.id, Argv: c.argv, Cwd: c.cwd})
+		g.Expect(err).NotTo(HaveOccurred(), c.id)
 	}
 	for _, c := range cases {
-		if got := exitCodeOf(t, f.waitExit(t, c.id)); got != c.code {
-			t.Errorf("%s: exit code %d, want %d", c.id, got, c.code)
-		}
+		t.Run(c.id, func(t *testing.T) {
+			NewWithT(t).Expect(exitCodeOf(t, f.waitExit(t, c.id))).To(Equal(c.code), "exit code")
+		})
 	}
-	if got := f.readAll(t, "missing", "stderr"); !strings.Contains(got, "sandboxd: start") {
-		t.Errorf("missing binary stderr = %q", got)
-	}
+	g.Expect(f.readAll(t, "missing", "stderr")).To(ContainSubstring("sandboxd: start"), "missing binary stderr")
 	wd, _ := filepath.EvalSymlinks(filepath.Join(f.home, "work"))
-	if got := strings.TrimSpace(f.readAll(t, "cwd", "stdout")); got != wd && got != filepath.Join(f.home, "work") {
-		t.Errorf("default cwd = %q, want %q", got, wd)
-	}
+	g.Expect(strings.TrimSpace(f.readAll(t, "cwd", "stdout"))).To(BeElementOf(wd, filepath.Join(f.home, "work")), "default cwd")
 }
 
 func TestStartIdempotentConcurrent(t *testing.T) {
+	g := NewWithT(t)
 	f := newFixture(t)
 	ctx := context.Background()
 	marker := filepath.Join(f.home, "marker")
@@ -209,50 +198,35 @@ func TestStartIdempotentConcurrent(t *testing.T) {
 	}
 	wg.Wait()
 	for _, s := range started[1:] {
-		if !s.Equal(started[0]) {
-			t.Fatalf("different started_at across duplicate starts: %v vs %v", s, started[0])
-		}
+		g.Expect(s).To(BeTemporally("==", started[0]), "different started_at across duplicate starts")
 	}
 	f.waitExit(t, "once")
 	// A start after exit returns the exited status and runs nothing.
 	c, err := f.client.StartCommand(ctx, req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if c.State != sandboxclient.StateExited {
-		t.Errorf("restart state = %s", c.State)
-	}
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(c.State).To(Equal(sandboxclient.StateExited), "restart state")
 	data, err := os.ReadFile(marker)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if n := strings.Count(string(data), "started"); n != 1 {
-		t.Errorf("command ran %d times", n)
-	}
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(strings.Count(string(data), "started")).To(Equal(1), "command run count")
 }
 
 func TestLogOffsetsWhileRunning(t *testing.T) {
+	g := NewWithT(t)
 	f := newFixture(t)
 	ctx := context.Background()
 	_, err := f.client.StartCommand(ctx, sandboxclient.CommandRequest{
 		ID:   "stream",
 		Argv: []string{"sh", "-c", `for i in 1 2 3 4 5; do echo "line $i"; echo "err $i" >&2; sleep 0.1; done`},
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	g.Expect(err).NotTo(HaveOccurred())
 	// Wait for partial output while still running, then continue from that offset.
 	var first []byte
 	var offset int64
 	for {
 		data, next, state, err := f.client.Logs(ctx, "stream", "stdout", 0)
-		if err != nil {
-			t.Fatal(err)
-		}
+		g.Expect(err).NotTo(HaveOccurred())
 		if len(data) > 0 {
-			if state != sandboxclient.StateRunning {
-				t.Fatalf("expected running with partial output, got %s", state)
-			}
+			g.Expect(state).To(Equal(sandboxclient.StateRunning), "expected running with partial output")
 			first, offset = data, next
 			break
 		}
@@ -261,9 +235,7 @@ func TestLogOffsetsWhileRunning(t *testing.T) {
 	var rest bytes.Buffer
 	for {
 		data, next, state, err := f.client.Logs(ctx, "stream", "stdout", offset)
-		if err != nil {
-			t.Fatal(err)
-		}
+		g.Expect(err).NotTo(HaveOccurred())
 		rest.Write(data)
 		offset = next
 		if len(data) == 0 && state == sandboxclient.StateExited {
@@ -272,41 +244,31 @@ func TestLogOffsetsWhileRunning(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	want := "line 1\nline 2\nline 3\nline 4\nline 5\n"
-	if got := string(first) + rest.String(); got != want {
-		t.Errorf("stdout = %q, want %q", got, want)
-	}
-	if got := f.readAll(t, "stream", "stderr"); got != strings.ReplaceAll(want, "line", "err") {
-		t.Errorf("stderr = %q", got)
-	}
-	if _, _, _, err := f.client.Logs(ctx, "nope", "stdout", 0); !errors.Is(err, sandboxclient.ErrNotFound) {
-		t.Errorf("logs of unknown command: %v", err)
-	}
+	g.Expect(string(first)+rest.String()).To(Equal(want), "stdout")
+	g.Expect(f.readAll(t, "stream", "stderr")).To(Equal(strings.ReplaceAll(want, "line", "err")), "stderr")
+	_, _, _, err = f.client.Logs(ctx, "nope", "stdout", 0)
+	g.Expect(err).To(MatchError(sandboxclient.ErrNotFound), "logs of unknown command")
 }
 
 func TestLargeOutputChunked(t *testing.T) {
+	g := NewWithT(t)
 	f := newFixture(t)
 	ctx := context.Background()
 	const size = 3<<20 + 123
 	_, err := f.client.StartCommand(ctx, sandboxclient.CommandRequest{
 		ID: "big", Argv: []string{"sh", "-c", "head -c 3145851 /dev/zero"},
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	g.Expect(err).NotTo(HaveOccurred())
 	f.waitExit(t, "big")
 	data, next, _, err := f.client.Logs(ctx, "big", "stdout", 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(data) != maxLogChunk || next != maxLogChunk {
-		t.Errorf("first chunk %d bytes, next %d", len(data), next)
-	}
-	if got := len(f.readAll(t, "big", "stdout")); got != size {
-		t.Errorf("total %d, want %d", got, size)
-	}
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(data).To(HaveLen(maxLogChunk), "first chunk")
+	g.Expect(next).To(BeEquivalentTo(maxLogChunk), "first chunk next offset")
+	g.Expect(f.readAll(t, "big", "stdout")).To(HaveLen(size), "total")
 }
 
 func TestSignalProcessGroup(t *testing.T) {
+	g := NewWithT(t)
 	f := newFixture(t)
 	ctx := context.Background()
 	pidFile := filepath.Join(f.home, "child.pid")
@@ -317,112 +279,75 @@ func TestSignalProcessGroup(t *testing.T) {
 		Argv: []string{"sh", "-c", `sleep 30 & trap '' TERM; echo $! > "$PIDFILE"; wait; echo after-wait`},
 		Env:  map[string]string{"PIDFILE": pidFile},
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	g.Expect(err).NotTo(HaveOccurred())
 	for {
 		if b, _ := os.ReadFile(pidFile); len(b) > 0 {
 			break
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	if err := f.client.Signal(ctx, "sleepy", "TERM"); err != nil {
-		t.Fatal(err)
-	}
+	g.Expect(f.client.Signal(ctx, "sleepy", "TERM")).To(Succeed())
 	c := f.waitExit(t, "sleepy")
-	if got := exitCodeOf(t, c); got != 0 {
-		t.Errorf("exit code %d, want 0 (shell survives, sleep killed)", got)
-	}
-	if out := f.readAll(t, "sleepy", "stdout"); out != "after-wait\n" {
-		t.Errorf("stdout = %q", out)
-	}
-	if err := f.client.Signal(ctx, "sleepy", "TERM"); !errors.Is(err, sandboxclient.ErrExited) {
-		t.Errorf("signal after exit: %v", err)
-	}
-	if err := f.client.Signal(ctx, "nope", "TERM"); !errors.Is(err, sandboxclient.ErrNotFound) {
-		t.Errorf("signal unknown: %v", err)
-	}
+	g.Expect(exitCodeOf(t, c)).To(Equal(0), "shell survives, sleep killed")
+	g.Expect(f.readAll(t, "sleepy", "stdout")).To(Equal("after-wait\n"), "stdout")
+	g.Expect(f.client.Signal(ctx, "sleepy", "TERM")).To(MatchError(sandboxclient.ErrExited), "signal after exit")
+	g.Expect(f.client.Signal(ctx, "nope", "TERM")).To(MatchError(sandboxclient.ErrNotFound), "signal unknown")
 }
 
 func TestSignalKillReportsSignal(t *testing.T) {
+	g := NewWithT(t)
 	f := newFixture(t)
 	ctx := context.Background()
-	if _, err := f.client.StartCommand(ctx, sandboxclient.CommandRequest{ID: "k", Argv: []string{"sleep", "30"}}); err != nil {
-		t.Fatal(err)
-	}
-	if err := f.client.Signal(ctx, "k", "KILL"); err != nil {
-		t.Fatal(err)
-	}
-	if got := exitCodeOf(t, f.waitExit(t, "k")); got != 128+9 {
-		t.Errorf("exit code %d, want 137", got)
-	}
-	if err := f.client.Signal(ctx, "k", "HUP"); err == nil || !strings.Contains(err.Error(), "400") {
-		t.Errorf("bad signal name: %v", err)
-	}
+	_, err := f.client.StartCommand(ctx, sandboxclient.CommandRequest{ID: "k", Argv: []string{"sleep", "30"}})
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(f.client.Signal(ctx, "k", "KILL")).To(Succeed())
+	g.Expect(exitCodeOf(t, f.waitExit(t, "k"))).To(Equal(128+9), "exit code")
+	g.Expect(f.client.Signal(ctx, "k", "HUP")).To(MatchError(ContainSubstring("400")), "bad signal name")
 }
 
 func TestTerminateAll(t *testing.T) {
+	g := NewWithT(t)
 	f := newFixture(t)
 	ctx := context.Background()
-	if _, err := f.client.StartCommand(ctx, sandboxclient.CommandRequest{ID: "s", Argv: []string{"sleep", "30"}}); err != nil {
-		t.Fatal(err)
-	}
+	_, err := f.client.StartCommand(ctx, sandboxclient.CommandRequest{ID: "s", Argv: []string{"sleep", "30"}})
+	g.Expect(err).NotTo(HaveOccurred())
 	start := time.Now()
 	f.srv.terminateAll(5 * time.Second)
-	if time.Since(start) > 3*time.Second {
-		t.Error("terminateAll waited too long")
-	}
-	if got := exitCodeOf(t, f.waitExit(t, "s")); got != 128+15 {
-		t.Errorf("exit code %d, want 143", got)
-	}
-	_, err := f.client.StartCommand(ctx, sandboxclient.CommandRequest{ID: "late", Argv: []string{"true"}})
-	if err == nil || !strings.Contains(err.Error(), "503") {
-		t.Errorf("start after shutdown: %v", err)
-	}
+	g.Expect(time.Since(start)).To(BeNumerically("<=", 3*time.Second), "terminateAll waited too long")
+	g.Expect(exitCodeOf(t, f.waitExit(t, "s"))).To(Equal(128+15), "exit code")
+	_, err = f.client.StartCommand(ctx, sandboxclient.CommandRequest{ID: "late", Argv: []string{"true"}})
+	g.Expect(err).To(MatchError(ContainSubstring("503")), "start after shutdown")
 }
 
 func TestFiles(t *testing.T) {
+	g := NewWithT(t)
 	f := newFixture(t)
 	ctx := context.Background()
 	path := filepath.Join(f.home, "a", "b", "c.txt")
-	if err := f.client.PutFile(ctx, path, []byte("hello"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	g.Expect(f.client.PutFile(ctx, path, []byte("hello"), 0o600)).To(Succeed())
 	got, err := f.client.GetFile(ctx, path)
-	if err != nil || string(got) != "hello" {
-		t.Fatalf("GetFile = %q, %v", got, err)
-	}
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(string(got)).To(Equal("hello"))
 	st, err := os.Stat(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if st.Mode().Perm() != 0o600 {
-		t.Errorf("mode = %v", st.Mode().Perm())
-	}
-	if err := f.client.PutFile(ctx, path, []byte("bye"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if got, _ := f.client.GetFile(ctx, path); string(got) != "bye" {
-		t.Errorf("overwrite = %q", got)
-	}
-	if entries, _ := os.ReadDir(filepath.Dir(path)); len(entries) != 1 {
-		t.Errorf("temp files left behind: %v", entries)
-	}
-	if _, err := f.client.GetFile(ctx, filepath.Join(f.home, "missing")); !errors.Is(err, sandboxclient.ErrNotFound) {
-		t.Errorf("missing file: %v", err)
-	}
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(st.Mode().Perm()).To(Equal(os.FileMode(0o600)), "mode")
+	g.Expect(f.client.PutFile(ctx, path, []byte("bye"), 0o755)).To(Succeed())
+	got, _ = f.client.GetFile(ctx, path)
+	g.Expect(string(got)).To(Equal("bye"), "overwrite")
+	entries, _ := os.ReadDir(filepath.Dir(path))
+	g.Expect(entries).To(HaveLen(1), "temp files left behind")
+	_, err = f.client.GetFile(ctx, filepath.Join(f.home, "missing"))
+	g.Expect(err).To(MatchError(sandboxclient.ErrNotFound), "missing file")
 }
 
 func TestPathAndRequestValidation(t *testing.T) {
+	g := NewWithT(t)
 	f := newFixture(t)
 	ctx := context.Background()
 	for _, p := range []string{"", "relative/x", f.home + "/a/../b", f.home + "/a/", f.home + "//a"} {
-		if err := f.client.PutFile(ctx, p, []byte("x"), 0o644); err == nil || !strings.Contains(err.Error(), "400") {
-			t.Errorf("PutFile(%q): %v", p, err)
-		}
-		if _, err := f.client.GetFile(ctx, p); err == nil || !strings.Contains(err.Error(), "400") {
-			t.Errorf("GetFile(%q): %v", p, err)
-		}
+		g.Expect(f.client.PutFile(ctx, p, []byte("x"), 0o644)).To(MatchError(ContainSubstring("400")), "PutFile(%q)", p)
+		_, err := f.client.GetFile(ctx, p)
+		g.Expect(err).To(MatchError(ContainSubstring("400")), "GetFile(%q)", p)
 	}
 	bad := []sandboxclient.CommandRequest{
 		{ID: "", Argv: []string{"true"}},
@@ -434,11 +359,9 @@ func TestPathAndRequestValidation(t *testing.T) {
 		{ID: "badenv", Argv: []string{"true"}, Env: map[string]string{"A=B": "c"}},
 	}
 	for _, r := range bad {
-		if _, err := f.client.StartCommand(ctx, r); err == nil || !strings.Contains(err.Error(), "400") {
-			t.Errorf("StartCommand(%+v): %v", r, err)
-		}
+		_, err := f.client.StartCommand(ctx, r)
+		g.Expect(err).To(MatchError(ContainSubstring("400")), "StartCommand(%+v)", r)
 	}
-	if _, err := f.client.Command(ctx, "unknown"); !errors.Is(err, sandboxclient.ErrNotFound) {
-		t.Errorf("unknown command: %v", err)
-	}
+	_, err := f.client.Command(ctx, "unknown")
+	g.Expect(err).To(MatchError(sandboxclient.ErrNotFound), "unknown command")
 }

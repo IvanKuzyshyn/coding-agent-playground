@@ -3,6 +3,7 @@ package api_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"slices"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	. "github.com/onsi/gomega"
 
 	"terrarium/internal/session"
 )
@@ -58,83 +60,70 @@ func call(t *testing.T, cs *mcp.ClientSession, tool string, args map[string]any)
 
 func TestMCPTools(t *testing.T) {
 	t.Parallel()
+	g := NewWithT(t)
 	e := newEnv(t, 10*time.Millisecond)
 	cs := e.mcp(t, alice)
 
 	tools, err := cs.ListTools(context.Background(), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	g.Expect(err).NotTo(HaveOccurred())
 	var names []string
 	for _, tl := range tools.Tools {
 		names = append(names, tl.Name)
 	}
 	slices.Sort(names)
 	want := []string{"create_session", "get_session", "list_options", "list_sessions", "send_follow_up", "terminate_session", "wait_for_session"}
-	if !slices.Equal(names, want) {
-		t.Fatalf("tools %v", names)
-	}
+	g.Expect(names).To(Equal(want), "tools")
 
 	opts, _, _ := call(t, cs, "list_options", nil)
-	if len(opts["presets"].([]any)) < 2 || len(opts["harnesses"].([]any)) != 2 {
-		t.Errorf("list_options: %v", opts)
-	}
+	g.Expect(len(opts["presets"].([]any))).To(BeNumerically(">=", 2), "list_options: %v", opts)
+	g.Expect(opts["harnesses"]).To(HaveLen(2), "list_options: %v", opts)
 
-	if _, isErr, text := call(t, cs, "create_session", map[string]any{"name": "   ", "harness": "codex", "prompt": "hi"}); !isErr || !strings.Contains(text, "name is required") {
-		t.Errorf("missing name: isError=%v %q", isErr, text)
-	}
+	_, isErr, text := call(t, cs, "create_session", map[string]any{"name": "   ", "harness": "codex", "prompt": "hi"})
+	g.Expect(isErr).To(BeTrue(), "missing name: %q", text)
+	g.Expect(text).To(ContainSubstring("name is required"), "missing name")
 	created, isErr, text := call(t, cs, "create_session", map[string]any{"name": "via mcp", "harness": "codex", "prompt": "hi", "repo": "octo/hello", "keep_idle": true})
-	if isErr {
-		t.Fatalf("create: %s", text)
-	}
+	g.Expect(isErr).To(BeFalse(), "create: %s", text)
 	id := created["id"].(string)
-	if created["status"] != session.StatusPending || !strings.HasSuffix(created["ui_url"].(string), "/sessions/"+id) ||
-		created["lifecycle"].(map[string]any)["on_complete"] != "keep_idle" {
-		t.Errorf("create: %v", created)
-	}
+	g.Expect(created).To(HaveKeyWithValue("status", session.StatusPending), "create")
+	g.Expect(created["ui_url"]).To(HaveSuffix("/sessions/"+id), "create")
+	g.Expect(created["lifecycle"]).To(HaveKeyWithValue("on_complete", "keep_idle"), "create")
 
 	got, _, _ := call(t, cs, "get_session", map[string]any{"id": id, "include_events": true})
 	turns := got["turns"].([]any)
-	if len(turns) != 1 || turns[0].(map[string]any)["prompt"] != "hi" || got["events"] == nil {
-		t.Errorf("get: %v", got)
-	}
-	if fu, isErr, text := call(t, cs, "send_follow_up", map[string]any{"id": id, "prompt": "more"}); isErr || fu["seq"] != float64(2) {
-		t.Errorf("follow-up: %v %s", fu, text)
-	}
+	g.Expect(turns).To(HaveLen(1), "get: %v", got)
+	g.Expect(turns[0]).To(HaveKeyWithValue("prompt", "hi"), "get")
+	g.Expect(got["events"]).NotTo(BeNil(), "get: %v", got)
+	fu, isErr, text := call(t, cs, "send_follow_up", map[string]any{"id": id, "prompt": "more"})
+	g.Expect(isErr).To(BeFalse(), "follow-up: %s", text)
+	g.Expect(fu).To(HaveKeyWithValue("seq", float64(2)), "follow-up")
 
 	list, _, _ := call(t, cs, "list_sessions", map[string]any{"harness": []string{"codex"}, "query": "via"})
-	if list["total"] != float64(1) {
-		t.Errorf("list: %v", list)
-	}
-	if _, isErr, _ := call(t, cs, "list_sessions", map[string]any{"status": []string{"bogus"}}); !isErr {
-		t.Error("unknown status accepted")
-	}
+	g.Expect(list).To(HaveKeyWithValue("total", float64(1)), "list")
+	_, isErr, _ = call(t, cs, "list_sessions", map[string]any{"status": []string{"bogus"}})
+	g.Expect(isErr).To(BeTrue(), "unknown status accepted")
 
 	start := time.Now()
 	waited, _, _ := call(t, cs, "wait_for_session", map[string]any{"id": id, "timeout_seconds": 1})
-	if waited["timed_out"] != true || time.Since(start) < time.Second {
-		t.Errorf("wait on a pending session: %v after %v", waited, time.Since(start))
-	}
+	g.Expect(waited).To(HaveKeyWithValue("timed_out", true), "wait on a pending session")
+	g.Expect(time.Since(start)).To(BeNumerically(">=", time.Second), "wait on a pending session")
 
 	ended, isErr, text := call(t, cs, "terminate_session", map[string]any{"id": id})
-	if isErr || ended["status"] != session.StatusStopping {
-		t.Errorf("terminate: %v %s", ended, text)
-	}
-	if _, isErr, _ := call(t, cs, "send_follow_up", map[string]any{"id": id, "prompt": "late"}); !isErr {
-		t.Error("follow-up accepted on an ending session")
-	}
+	g.Expect(isErr).To(BeFalse(), "terminate: %s", text)
+	g.Expect(ended).To(HaveKeyWithValue("status", session.StatusStopping), "terminate")
+	_, isErr, _ = call(t, cs, "send_follow_up", map[string]any{"id": id, "prompt": "late"})
+	g.Expect(isErr).To(BeTrue(), "follow-up accepted on an ending session")
 }
 
 func TestMCPWaitReturnsWhenSettled(t *testing.T) {
 	t.Parallel()
+	g := NewWithT(t)
 	e := newEnv(t, 10*time.Millisecond)
 	cs := e.mcp(t, alice)
 	id := e.create(t, alice)
 	e.stop(t, id)
 	waited, _, _ := call(t, cs, "wait_for_session", map[string]any{"id": id.String(), "timeout_seconds": 30})
-	if waited["status"] != session.StatusStopped || waited["timed_out"] == true {
-		t.Errorf("wait: %v", waited)
-	}
+	g.Expect(waited).To(HaveKeyWithValue("status", session.StatusStopped), "wait")
+	g.Expect(waited).NotTo(HaveKeyWithValue("timed_out", true), "wait")
 }
 
 func TestMCPOwnershipAndAuth(t *testing.T) {
@@ -144,9 +133,12 @@ func TestMCPOwnershipAndAuth(t *testing.T) {
 	e.stop(t, id)
 	cs := e.mcp(t, bob)
 	for _, tool := range []string{"get_session", "wait_for_session"} {
-		if got, isErr, text := call(t, cs, tool, map[string]any{"id": id.String()}); isErr || got["owner"] != "alice" {
-			t.Errorf("%s on another user's session: isError=%v %q", tool, isErr, text)
-		}
+		t.Run(tool, func(t *testing.T) {
+			g := NewWithT(t)
+			got, isErr, text := call(t, cs, tool, map[string]any{"id": id.String()})
+			g.Expect(isErr).To(BeFalse(), "%s on another user's session: %q", tool, text)
+			g.Expect(got).To(HaveKeyWithValue("owner", "alice"), "%s on another user's session", tool)
+		})
 	}
 	for _, tc := range []struct {
 		tool string
@@ -155,31 +147,32 @@ func TestMCPOwnershipAndAuth(t *testing.T) {
 		{"terminate_session", map[string]any{"id": id.String()}},
 		{"send_follow_up", map[string]any{"id": id.String(), "prompt": "x"}},
 	} {
-		if _, isErr, text := call(t, cs, tc.tool, tc.args); !isErr || !strings.Contains(text, "only alice") {
-			t.Errorf("%s on another user's session: isError=%v %q", tc.tool, isErr, text)
-		}
+		t.Run(tc.tool, func(t *testing.T) {
+			g := NewWithT(t)
+			_, isErr, text := call(t, cs, tc.tool, tc.args)
+			g.Expect(isErr).To(BeTrue(), "%s on another user's session: %q", tc.tool, text)
+			g.Expect(text).To(ContainSubstring("only alice"), "%s on another user's session", tc.tool)
+		})
 	}
-	if list, _, _ := call(t, cs, "list_sessions", nil); list["total"] != float64(1) {
-		t.Errorf("list should include every user's sessions: %v", list)
-	}
-	if list, _, _ := call(t, cs, "list_sessions", map[string]any{"owner": "bob"}); list["total"] != float64(0) {
-		t.Errorf("owner filter: %v", list)
-	}
+	g := NewWithT(t)
+	list, _, _ := call(t, cs, "list_sessions", nil)
+	g.Expect(list).To(HaveKeyWithValue("total", float64(1)), "list should include every user's sessions")
+	list, _, _ = call(t, cs, "list_sessions", map[string]any{"owner": "bob"})
+	g.Expect(list).To(HaveKeyWithValue("total", float64(0)), "owner filter")
 
 	for _, token := range []string{"", "nope"} {
-		req, _ := http.NewRequest(http.MethodPost, e.srv.URL+"/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Accept", "application/json, text/event-stream")
-		if token != "" {
-			req.Header.Set("Authorization", "Bearer "+token)
-		}
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		resp.Body.Close()
-		if resp.StatusCode != http.StatusUnauthorized {
-			t.Errorf("token %q: %d", token, resp.StatusCode)
-		}
+		t.Run(fmt.Sprintf("token %q", token), func(t *testing.T) {
+			g := NewWithT(t)
+			req, _ := http.NewRequest(http.MethodPost, e.srv.URL+"/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Accept", "application/json, text/event-stream")
+			if token != "" {
+				req.Header.Set("Authorization", "Bearer "+token)
+			}
+			resp, err := http.DefaultClient.Do(req)
+			g.Expect(err).NotTo(HaveOccurred())
+			resp.Body.Close()
+			g.Expect(resp.StatusCode).To(Equal(http.StatusUnauthorized))
+		})
 	}
 }

@@ -2,16 +2,17 @@ package sandboxclient
 
 import (
 	"context"
-	"errors"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
+
+	. "github.com/onsi/gomega"
 )
 
 // End-to-end behaviour against the real daemon is tested in cmd/sandboxd; this covers the
 // client's own request building and error mapping.
 func TestClientRequestsAndErrors(t *testing.T) {
+	g := NewWithT(t)
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer tok" {
 			w.WriteHeader(http.StatusUnauthorized)
@@ -44,26 +45,18 @@ func TestClientRequestsAndErrors(t *testing.T) {
 	ctx := context.Background()
 	c := New(ts.URL+"/", "tok", nil)
 
-	if err := c.PutFile(ctx, "/a b/c", []byte("x"), 0o640); err != nil {
-		t.Errorf("PutFile: %v", err)
-	}
+	g.Expect(c.PutFile(ctx, "/a b/c", []byte("x"), 0o640)).To(Succeed(), "PutFile")
 	data, next, state, err := c.Logs(ctx, "c1", "stderr", 7)
-	if err != nil || string(data) != "abc" || next != 10 || state != StateExited {
-		t.Errorf("Logs = %q %d %q %v", data, next, state, err)
-	}
-	if err := c.Signal(ctx, "c1", "TERM"); !errors.Is(err, ErrExited) {
-		t.Errorf("Signal 409: %v", err)
-	}
-	if _, err := c.Command(ctx, "missing"); !errors.Is(err, ErrNotFound) {
-		t.Errorf("Command 404: %v", err)
-	}
-	if _, err := c.GetFile(ctx, "/missing"); !errors.Is(err, ErrNotFound) {
-		t.Errorf("GetFile 404: %v", err)
-	}
-	if _, err := c.Command(ctx, "broken"); err == nil || !strings.Contains(err.Error(), "500") || !strings.Contains(err.Error(), "boom") {
-		t.Errorf("Command 500: %v", err)
-	}
-	if err := New(ts.URL, "wrong", nil).Health(ctx); err == nil || !strings.Contains(err.Error(), "401") {
-		t.Errorf("Health 401: %v", err)
-	}
+	g.Expect(err).NotTo(HaveOccurred(), "Logs")
+	g.Expect(string(data)).To(Equal("abc"))
+	g.Expect(next).To(Equal(int64(10)))
+	g.Expect(state).To(Equal(StateExited))
+	g.Expect(c.Signal(ctx, "c1", "TERM")).To(MatchError(ErrExited), "Signal 409")
+	_, err = c.Command(ctx, "missing")
+	g.Expect(err).To(MatchError(ErrNotFound), "Command 404")
+	_, err = c.GetFile(ctx, "/missing")
+	g.Expect(err).To(MatchError(ErrNotFound), "GetFile 404")
+	_, err = c.Command(ctx, "broken")
+	g.Expect(err).To(MatchError(And(ContainSubstring("500"), ContainSubstring("boom"))), "Command 500")
+	g.Expect(New(ts.URL, "wrong", nil).Health(ctx)).To(MatchError(ContainSubstring("401")), "Health 401")
 }

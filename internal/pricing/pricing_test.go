@@ -1,16 +1,16 @@
 package pricing
 
 import (
-	"math"
 	"path/filepath"
 	"testing"
+
+	. "github.com/onsi/gomega"
 )
 
 func TestCost(t *testing.T) {
+	g := NewWithT(t)
 	tbl, err := Load(filepath.Join("..", "..", "config", "pricing.yaml"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	g.Expect(err).NotTo(HaveOccurred())
 	cases := []struct {
 		model  string
 		u      Usage
@@ -30,9 +30,11 @@ func TestCost(t *testing.T) {
 		{"claude-opus-55", Usage{Input: 1}, 0, false},
 	}
 	for _, c := range cases {
-		got, ok := tbl.Cost(c.model, c.u)
-		if ok != c.priced || math.Abs(got-c.want) > 1e-9 {
-			t.Errorf("%s %+v: got (%v, %v) want (%v, %v)", c.model, c.u, got, ok, c.want, c.priced)
-		}
+		t.Run(c.model, func(t *testing.T) {
+			g := NewWithT(t)
+			got, ok := tbl.Cost(c.model, c.u)
+			g.Expect(ok).To(Equal(c.priced))
+			g.Expect(got).To(BeNumerically("~", c.want, 1e-9))
+		})
 	}
 }

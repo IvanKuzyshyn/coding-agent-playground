@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	. "github.com/onsi/gomega"
+
 	"terrarium/internal/api"
 )
 
@@ -21,13 +23,13 @@ func TestRequestsFromSandboxNetworkAreRefused(t *testing.T) {
 		"127.0.0.1:51000":    http.StatusOK,
 		"garbage":            http.StatusForbidden,
 	} {
-		req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
-		req.RemoteAddr = addr
-		rec := httptest.NewRecorder()
-		h.ServeHTTP(rec, req)
-		if rec.Code != want {
-			t.Errorf("%s: got %d want %d", addr, rec.Code, want)
-		}
+		t.Run(addr, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+			req.RemoteAddr = addr
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, req)
+			NewWithT(t).Expect(rec.Code).To(Equal(want))
+		})
 	}
 }
 
@@ -52,7 +54,5 @@ func TestActiveSessionCapHoldsUnderConcurrency(t *testing.T) {
 		}()
 	}
 	wg.Wait()
-	if created != 2 {
-		t.Errorf("created %d sessions concurrently, cap is 2", created)
-	}
+	NewWithT(t).Expect(created).To(Equal(2), "sessions created concurrently, cap is 2")
 }

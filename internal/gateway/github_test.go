@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	. "github.com/onsi/gomega"
 
 	"terrarium/internal/session"
 )
@@ -100,46 +101,40 @@ func gitBasic(token string) string {
 }
 
 func TestGitHubFetchSwapsCredential(t *testing.T) {
+	g := NewWithT(t)
 	ge := newGitHubEnv(t, realGitHubToken)
 	secret, _ := ge.addSession(session.StatusProvisioning, "octo/Hello")
 
 	r := ge.do("GET", "/github/octo/hello.git/info/refs?service=git-upload-pack", basic(secret), "")
-	if r.status != http.StatusOK || r.body != "upstream ok" {
-		t.Fatalf("info/refs: %d %s", r.status, r.body)
-	}
+	g.Expect(r.status).To(Equal(http.StatusOK), "info/refs: %s", r.body)
+	g.Expect(r.body).To(Equal("upstream ok"))
 	assertNoSecrets(t, r, realGitHubToken, secret)
 	r = ge.do("POST", "/github/octo/Hello/git-upload-pack", basic(secret), "0000")
-	if r.status != http.StatusOK {
-		t.Fatalf("upload-pack: %d %s", r.status, r.body)
-	}
+	g.Expect(r.status).To(Equal(http.StatusOK), "upload-pack: %s", r.body)
 	calls := ge.taken()
-	if len(calls) != 2 {
-		t.Fatalf("calls: %+v", calls)
-	}
+	g.Expect(calls).To(HaveLen(2))
 	// The session's spec spelling is used upstream, whatever case the sandbox sent.
-	if calls[0].path != "/octo/Hello.git/info/refs" || calls[0].query != "service=git-upload-pack" || calls[1].path != "/octo/Hello.git/git-upload-pack" {
-		t.Errorf("upstream paths: %+v", calls)
-	}
+	g.Expect(calls[0].path).To(Equal("/octo/Hello.git/info/refs"))
+	g.Expect(calls[0].query).To(Equal("service=git-upload-pack"))
+	g.Expect(calls[1].path).To(Equal("/octo/Hello.git/git-upload-pack"))
 	for _, c := range calls {
-		if c.auth != gitBasic(realGitHubToken) {
-			t.Errorf("upstream auth %q", c.auth)
-		}
+		g.Expect(c.auth).To(Equal(gitBasic(realGitHubToken)), "upstream auth")
 	}
 }
 
 func TestGitHubChallengesWithoutCredential(t *testing.T) {
+	g := NewWithT(t)
 	ge := newGitHubEnv(t, realGitHubToken)
 	r := ge.do("GET", "/github/octo/hello.git/info/refs?service=git-upload-pack", "", "")
-	if r.status != http.StatusUnauthorized || !strings.HasPrefix(r.header.Get("WWW-Authenticate"), "Basic") {
-		t.Errorf("got %d %v", r.status, r.header)
-	}
+	g.Expect(r.status).To(Equal(http.StatusUnauthorized))
+	g.Expect(r.header.Get("WWW-Authenticate")).To(HavePrefix("Basic"))
 	r = ge.do("GET", "/github/octo/hello.git/info/refs?service=git-upload-pack", basic(strings.Repeat("f", 64)), "")
-	if r.status != http.StatusForbidden || len(ge.taken()) != 0 {
-		t.Errorf("unknown secret: %d", r.status)
-	}
+	g.Expect(r.status).To(Equal(http.StatusForbidden), "unknown secret")
+	g.Expect(ge.taken()).To(BeEmpty(), "unknown secret reached GitHub")
 }
 
 func TestGitHubDenials(t *testing.T) {
+	g := NewWithT(t)
 	ge := newGitHubEnv(t, realGitHubToken)
 	secret, id := ge.addSession(session.StatusRunning, "octo/hello")
 	ended, _ := ge.addSession(session.StatusComplete, "octo/hello")
@@ -174,27 +169,22 @@ func TestGitHubDenials(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			r := ge.do(c.method, c.path, c.auth, c.body)
-			if r.status != c.want {
-				t.Errorf("got %d %s, want %d", r.status, r.body, c.want)
-			}
+			NewWithT(t).Expect(r.status).To(Equal(c.want), "body: %s", r.body)
 			assertNoSecrets(t, r, realGitHubToken)
 		})
 	}
-	if n := len(ge.taken()); n != 0 {
-		t.Errorf("%d requests reached GitHub", n)
-	}
+	g.Expect(ge.taken()).To(BeEmpty(), "requests reached GitHub")
 	var denied int
 	for _, ev := range ge.st.eventsFor(id) {
 		if ev["via"] == "github" && ev["decision"] == "denied" {
 			denied++
 		}
 	}
-	if denied == 0 {
-		t.Error("no denied github egress events recorded")
-	}
+	g.Expect(denied).NotTo(BeZero(), "no denied github egress events recorded")
 }
 
 func TestGitHubPushToSessionBranch(t *testing.T) {
+	g := NewWithT(t)
 	ge := newGitHubEnv(t, realGitHubToken)
 	secret, id := ge.addSession(session.StatusRunning, "octo/hello")
 	ref := "refs/heads/" + session.BranchPrefix(id.String()) + "fix-readme"
@@ -202,85 +192,71 @@ func TestGitHubPushToSessionBranch(t *testing.T) {
 	body := pushBody(ref, none, newer) + strings.Repeat("P", 70000)
 
 	r := ge.do("GET", "/github/octo/hello.git/info/refs?service=git-receive-pack", basic(secret), "")
-	if r.status != http.StatusOK {
-		t.Fatalf("receive-pack refs: %d %s", r.status, r.body)
-	}
+	g.Expect(r.status).To(Equal(http.StatusOK), "receive-pack refs: %s", r.body)
 	r = ge.do("POST", "/github/octo/hello.git/git-receive-pack", basic(secret), body)
-	if r.status != http.StatusOK {
-		t.Fatalf("push: %d %s", r.status, r.body)
-	}
+	g.Expect(r.status).To(Equal(http.StatusOK), "push: %s", r.body)
 	calls := ge.taken()
-	if len(calls) != 2 || calls[1].body != body || calls[1].auth != gitBasic(realGitHubToken) {
-		t.Fatalf("push not forwarded intact: %d calls", len(calls))
-	}
+	g.Expect(calls).To(HaveLen(2))
+	// Compare as a bool: printing the ~70KB body on failure is noise.
+	g.Expect(calls[1].body == body).To(BeTrue(), "push not forwarded intact")
+	g.Expect(calls[1].auth).To(Equal(gitBasic(realGitHubToken)))
 	var allowed bool
 	for _, ev := range ge.st.eventsFor(id) {
 		if ev["via"] == "github" && ev["decision"] == "allowed" {
 			allowed = true
 		}
 	}
-	if !allowed {
-		t.Error("allowed push not recorded")
-	}
+	g.Expect(allowed).To(BeTrue(), "allowed push not recorded")
 }
 
 func TestGitHubPullRequest(t *testing.T) {
+	g := NewWithT(t)
 	ge := newGitHubEnv(t, realGitHubToken)
 	secret, id := ge.addSession(session.StatusIdle, "octo/hello")
 	body := `{"title":"t","head":"` + session.BranchPrefix(id.String()) + `fix","base":"main"}`
 
 	r := ge.do("POST", "/github/api/repos/octo/hello/pulls", basic(secret), body)
-	if r.status != http.StatusOK {
-		t.Fatalf("pr: %d %s", r.status, r.body)
-	}
+	g.Expect(r.status).To(Equal(http.StatusOK), "pr: %s", r.body)
 	calls := ge.taken()
-	if len(calls) != 1 || calls[0].path != "/api/repos/octo/hello/pulls" || calls[0].body != body || calls[0].auth != "Bearer "+realGitHubToken {
-		t.Errorf("upstream: %+v", calls)
-	}
+	g.Expect(calls).To(HaveLen(1))
+	g.Expect(calls[0].path).To(Equal("/api/repos/octo/hello/pulls"))
+	g.Expect(calls[0].body).To(Equal(body))
+	g.Expect(calls[0].auth).To(Equal("Bearer " + realGitHubToken))
 }
 
 func TestGitHubWithoutToken(t *testing.T) {
+	g := NewWithT(t)
 	ge := newGitHubEnv(t, "")
 	secret, id := ge.addSession(session.StatusRunning, "octo/hello")
 
 	r := ge.do("GET", "/github/octo/hello.git/info/refs?service=git-upload-pack", basic(secret), "")
-	if r.status != http.StatusOK {
-		t.Fatalf("public fetch: %d %s", r.status, r.body)
-	}
-	if calls := ge.taken(); len(calls) != 1 || calls[0].auth != "" {
-		t.Errorf("fetch without token sent auth %+v", calls)
-	}
+	g.Expect(r.status).To(Equal(http.StatusOK), "public fetch: %s", r.body)
+	calls := ge.taken()
+	g.Expect(calls).To(HaveLen(1))
+	g.Expect(calls[0].auth).To(BeEmpty(), "fetch without token sent auth")
 	r = ge.do("POST", "/github/octo/hello.git/git-receive-pack", basic(secret),
 		pushBody("refs/heads/"+session.BranchPrefix(id.String())+"x", none, newer))
-	if r.status != http.StatusServiceUnavailable {
-		t.Errorf("push without token: %d", r.status)
-	}
+	g.Expect(r.status).To(Equal(http.StatusServiceUnavailable), "push without token")
 	r = ge.do("POST", "/github/api/repos/octo/hello/pulls", basic(secret), `{"head":"`+session.BranchPrefix(id.String())+`x"}`)
-	if r.status != http.StatusServiceUnavailable {
-		t.Errorf("pr without token: %d", r.status)
-	}
+	g.Expect(r.status).To(Equal(http.StatusServiceUnavailable), "pr without token")
 }
 
 func TestGitHubPushUpdatesExistingBranches(t *testing.T) {
+	g := NewWithT(t)
 	ge := newGitHubEnv(t, realGitHubToken)
 	secret, _ := ge.addSession(session.StatusRunning, "octo/hello")
 	for _, ref := range []string{"refs/heads/add-feature", "refs/heads/main"} {
-		if r := ge.do("POST", "/github/octo/hello.git/git-receive-pack", basic(secret), pushBody(ref, existing, newer)); r.status != http.StatusOK {
-			t.Errorf("update %s: %d %s", ref, r.status, r.body)
-		}
+		r := ge.do("POST", "/github/octo/hello.git/git-receive-pack", basic(secret), pushBody(ref, existing, newer))
+		g.Expect(r.status).To(Equal(http.StatusOK), "update %s: %s", ref, r.body)
 	}
 	// A PR may come from any branch of the repository.
-	if r := ge.do("POST", "/github/api/repos/octo/hello/pulls", basic(secret), `{"head":"add-feature","base":"main"}`); r.status != http.StatusOK {
-		t.Errorf("pr from existing branch: %d %s", r.status, r.body)
-	}
-	if n := len(ge.taken()); n != 3 {
-		t.Errorf("%d requests reached GitHub, want 3", n)
-	}
+	r := ge.do("POST", "/github/api/repos/octo/hello/pulls", basic(secret), `{"head":"add-feature","base":"main"}`)
+	g.Expect(r.status).To(Equal(http.StatusOK), "pr from existing branch: %s", r.body)
+	g.Expect(ge.taken()).To(HaveLen(3), "requests reached GitHub")
 }
 
 func TestPushAllowedSHA256(t *testing.T) {
 	zero256 := strings.Repeat("0", 64)
-	if msg := pushAllowed(pushCommand{zero256, strings.Repeat("b", 64), "refs/heads/feature"}, "terrarium/s/"); msg == "" {
-		t.Error("SHA-256 zero id not treated as a new branch")
-	}
+	msg := pushAllowed(pushCommand{zero256, strings.Repeat("b", 64), "refs/heads/feature"}, "terrarium/s/")
+	NewWithT(t).Expect(msg).NotTo(BeEmpty(), "SHA-256 zero id not treated as a new branch")
 }

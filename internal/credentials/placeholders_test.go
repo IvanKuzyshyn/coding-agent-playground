@@ -3,6 +3,8 @@ package credentials
 import (
 	"encoding/json"
 	"testing"
+
+	. "github.com/onsi/gomega"
 )
 
 func TestSecretFromBearer(t *testing.T) {
@@ -20,14 +22,19 @@ func TestSecretFromBearer(t *testing.T) {
 		{"real-looking claude token", "Bearer sk-ant-oat01-abcdef", false},
 	}
 	for _, c := range cases {
-		got, ok := SecretFromBearer(c.header)
-		if ok != c.ok || (ok && got != secret) {
-			t.Errorf("%s: got (%q, %v)", c.name, got, ok)
-		}
+		t.Run(c.name, func(t *testing.T) {
+			g := NewWithT(t)
+			got, ok := SecretFromBearer(c.header)
+			g.Expect(ok).To(Equal(c.ok))
+			if ok {
+				g.Expect(got).To(Equal(secret))
+			}
+		})
 	}
 }
 
 func TestCodexAuthJSONShape(t *testing.T) {
+	g := NewWithT(t)
 	var a struct {
 		AuthMode    string `json:"auth_mode"`
 		LastRefresh string `json:"last_refresh"`
@@ -37,13 +44,11 @@ func TestCodexAuthJSONShape(t *testing.T) {
 		} `json:"tokens"`
 	}
 	secret := NewSecret()
-	if err := json.Unmarshal(CodexAuthJSON(secret, "2026-10-10T00:00:00Z"), &a); err != nil {
-		t.Fatal(err)
-	}
-	if a.AuthMode != "chatgpt" || a.LastRefresh == "" || a.Tokens.AccountID != CodexAccountID {
-		t.Fatalf("unexpected auth.json: %+v", a)
-	}
-	if got, ok := SecretFromBearer("Bearer " + a.Tokens.AccessToken); !ok || got != secret {
-		t.Fatalf("unexpected auth.json: %+v", a)
-	}
+	g.Expect(json.Unmarshal(CodexAuthJSON(secret, "2026-10-10T00:00:00Z"), &a)).To(Succeed())
+	g.Expect(a.AuthMode).To(Equal("chatgpt"))
+	g.Expect(a.LastRefresh).NotTo(BeEmpty())
+	g.Expect(a.Tokens.AccountID).To(Equal(CodexAccountID))
+	got, ok := SecretFromBearer("Bearer " + a.Tokens.AccessToken)
+	g.Expect(ok).To(BeTrue(), "access token is not a placeholder: %+v", a)
+	g.Expect(got).To(Equal(secret))
 }

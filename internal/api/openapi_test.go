@@ -2,22 +2,19 @@ package api
 
 import (
 	"context"
-	"slices"
 	"strings"
 	"testing"
 
 	"github.com/getkin/kin-openapi/openapi3"
+	. "github.com/onsi/gomega"
 )
 
 // The spec must be valid and describe exactly the REST routes the server registers.
 func TestOpenAPISpecCoversRoutes(t *testing.T) {
+	g := NewWithT(t)
 	doc, err := openapi3.NewLoader().LoadFromData(openapiSpec)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := doc.Validate(context.Background()); err != nil {
-		t.Fatalf("invalid spec: %v", err)
-	}
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(doc.Validate(context.Background())).To(Succeed(), "invalid spec")
 	var documented []string
 	for path, item := range doc.Paths.Map() {
 		for method := range item.Operations() {
@@ -28,16 +25,5 @@ func TestOpenAPISpecCoversRoutes(t *testing.T) {
 	for _, rt := range (&Server{}).restRoutes() {
 		served = append(served, rt.pattern)
 	}
-	slices.Sort(documented)
-	slices.Sort(served)
-	for _, r := range served {
-		if !slices.Contains(documented, r) {
-			t.Errorf("route %s is not in openapi.yaml", r)
-		}
-	}
-	for _, r := range documented {
-		if !slices.Contains(served, r) {
-			t.Errorf("openapi.yaml documents %s, which is not served", r)
-		}
-	}
+	g.Expect(served).To(ConsistOf(documented), "served routes must match the routes in openapi.yaml")
 }

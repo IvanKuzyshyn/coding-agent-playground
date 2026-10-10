@@ -3,7 +3,6 @@ package ops_test
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"slices"
 	"strconv"
 	"strings"
@@ -11,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	. "github.com/onsi/gomega"
 
 	"terrarium/internal/harness"
 	"terrarium/internal/ops"
@@ -130,36 +130,31 @@ func summarize(events []store.Event) []evSummary {
 
 func TestHappyPathClaude(t *testing.T) {
 	t.Parallel()
+	g := NewWithT(t)
 	e := newEnv(t)
 	e.fleet.Program = turnPrograms(claudeHappy())
 	s := e.provisioned(t, testutil.Spec(session.HarnessClaude))
 
-	if _, err := e.runActive(t, context.Background(), s.ID); err != nil {
-		t.Fatalf("run turn: %v", err)
-	}
+	_, err := e.runActive(t, context.Background(), s.ID)
+	g.Expect(err).NotTo(HaveOccurred(), "run turn")
 
 	s = testutil.MustSession(t, e.st, s.ID)
-	if s.Status != session.StatusIdle || s.HarnessSession != testutil.ClaudeSessionID {
-		t.Errorf("session: status %q harness session %q", s.Status, s.HarnessSession)
-	}
-	if s.IdleUntil == nil || time.Until(*s.IdleUntil) < 59*time.Minute {
-		t.Errorf("idle_until not set from the idle timeout: %v", s.IdleUntil)
-	}
+	g.Expect(s.Status).To(Equal(session.StatusIdle))
+	g.Expect(s.HarnessSession).To(Equal(testutil.ClaudeSessionID))
+	g.Expect(s.IdleUntil).NotTo(BeNil(), "idle_until not set from the idle timeout")
+	g.Expect(time.Until(*s.IdleUntil)).To(BeNumerically(">=", 59*time.Minute), "idle_until not set from the idle timeout")
 	tn := testutil.MustTurn(t, e.st, s.ID, 1)
-	if tn.Status != session.TurnComplete || tn.Result != "ok" || tn.Error != "" || tn.CommandID != "turn-1" {
-		t.Errorf("turn: %+v", tn)
-	}
+	g.Expect(tn.Status).To(Equal(session.TurnComplete))
+	g.Expect(tn.Result).To(Equal("ok"))
+	g.Expect(tn.Error).To(BeEmpty())
+	g.Expect(tn.CommandID).To(Equal("turn-1"))
 	var usage harness.Usage
-	if err := json.Unmarshal(tn.Usage, &usage); err != nil {
-		t.Fatalf("usage %s: %v", tn.Usage, err)
-	}
-	if usage != (harness.Usage{InputTokens: 14, OutputTokens: 272, CachedInputTokens: 100, AgentSteps: 3}) {
-		t.Errorf("usage: %+v", usage)
-	}
+	g.Expect(json.Unmarshal(tn.Usage, &usage)).To(Succeed(), "usage %s", tn.Usage)
+	g.Expect(usage).To(Equal(harness.Usage{InputTokens: 14, OutputTokens: 272, CachedInputTokens: 100, AgentSteps: 3}))
 	cmd, _ := e.fleet.Command(s.ID, "turn-1")
-	if slices.Contains(cmd.Argv, "--resume") || cmd.Argv[0] != "claude" || cmd.Argv[len(cmd.Argv)-1] != "say ok" {
-		t.Errorf("first turn argv: %v", cmd.Argv)
-	}
+	g.Expect(cmd.Argv).NotTo(ContainElement("--resume"), "first turn argv")
+	g.Expect(cmd.Argv[0]).To(Equal("claude"), "first turn argv")
+	g.Expect(cmd.Argv[len(cmd.Argv)-1]).To(Equal("say ok"), "first turn argv")
 
 	got := summarize(testutil.MustEvents(t, e.st, s.ID))
 	want := []evSummary{
@@ -175,13 +170,12 @@ func TestHappyPathClaude(t *testing.T) {
 		{"lifecycle", "turn:complete"},
 		{"lifecycle", "session:idle"},
 	}
-	if !slices.Equal(got, want) {
-		t.Errorf("events:\n got %v\nwant %v", got, want)
-	}
+	g.Expect(got).To(Equal(want), "events")
 }
 
 func TestHappyPathCodexAndResume(t *testing.T) {
 	t.Parallel()
+	g := NewWithT(t)
 	e := newEnv(t)
 	codex := testutil.Program{
 		testutil.Line(testutil.CodexThread),
@@ -192,64 +186,53 @@ func TestHappyPathCodexAndResume(t *testing.T) {
 	}
 	e.fleet.Program = turnPrograms(codex, codex)
 	s := e.provisioned(t, testutil.Spec(session.HarnessCodex))
-	if _, ok := e.fleet.File(s.ID, harness.Home+"/.codex/config.toml"); !ok {
-		t.Error("codex config not written")
-	}
+	_, ok := e.fleet.File(s.ID, harness.Home+"/.codex/config.toml")
+	g.Expect(ok).To(BeTrue(), "codex config not written")
 
-	if _, err := e.runActive(t, context.Background(), s.ID); err != nil {
-		t.Fatalf("turn 1: %v", err)
-	}
+	_, err := e.runActive(t, context.Background(), s.ID)
+	g.Expect(err).NotTo(HaveOccurred(), "turn 1")
 	tn := testutil.MustTurn(t, e.st, s.ID, 1)
-	if tn.Status != session.TurnComplete || tn.Result != "41" {
-		t.Errorf("turn 1: %+v", tn)
-	}
+	g.Expect(tn.Status).To(Equal(session.TurnComplete), "turn 1")
+	g.Expect(tn.Result).To(Equal("41"), "turn 1")
 	var usage harness.Usage
 	_ = json.Unmarshal(tn.Usage, &usage)
-	if usage.InputTokens != 12926 || usage.CachedInputTokens != 9600 || usage.OutputTokens != 10 {
-		t.Errorf("usage: %+v", usage)
-	}
-	if hs := testutil.MustSession(t, e.st, s.ID).HarnessSession; hs != testutil.CodexThreadID {
-		t.Errorf("harness session %q", hs)
-	}
+	g.Expect(usage.InputTokens).To(BeEquivalentTo(12926))
+	g.Expect(usage.CachedInputTokens).To(BeEquivalentTo(9600))
+	g.Expect(usage.OutputTokens).To(BeEquivalentTo(10))
+	g.Expect(testutil.MustSession(t, e.st, s.ID).HarnessSession).To(Equal(testutil.CodexThreadID))
 
-	if _, err := e.st.EnqueueTurn(context.Background(), s.ID, "and again"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := e.runActive(t, context.Background(), s.ID); err != nil {
-		t.Fatalf("turn 2: %v", err)
-	}
+	_, err = e.st.EnqueueTurn(context.Background(), s.ID, "and again")
+	g.Expect(err).NotTo(HaveOccurred())
+	_, err = e.runActive(t, context.Background(), s.ID)
+	g.Expect(err).NotTo(HaveOccurred(), "turn 2")
 	cmd, _ := e.fleet.Command(s.ID, "turn-2")
-	if want := []string{"codex", "exec", "resume", testutil.CodexThreadID}; !slices.Equal(cmd.Argv[:4], want) || cmd.Argv[len(cmd.Argv)-1] != "and again" {
-		t.Errorf("turn 2 argv: %v", cmd.Argv)
-	}
-	if tn := testutil.MustTurn(t, e.st, s.ID, 2); tn.Status != session.TurnComplete {
-		t.Errorf("turn 2: %+v", tn)
-	}
+	g.Expect(cmd.Argv[:4]).To(Equal([]string{"codex", "exec", "resume", testutil.CodexThreadID}), "turn 2 argv")
+	g.Expect(cmd.Argv[len(cmd.Argv)-1]).To(Equal("and again"), "turn 2 argv")
+	g.Expect(testutil.MustTurn(t, e.st, s.ID, 2).Status).To(Equal(session.TurnComplete), "turn 2")
 }
 
 func TestFollowUpResumesClaudeSession(t *testing.T) {
 	t.Parallel()
+	g := NewWithT(t)
 	e := newEnv(t)
 	e.fleet.Program = turnPrograms(claudeHappy(), claudeHappy())
 	s := e.provisioned(t, testutil.Spec(session.HarnessClaude))
-	if _, err := e.runActive(t, context.Background(), s.ID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := e.st.EnqueueTurn(context.Background(), s.ID, "follow up"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := e.runActive(t, context.Background(), s.ID); err != nil {
-		t.Fatal(err)
-	}
+	_, err := e.runActive(t, context.Background(), s.ID)
+	g.Expect(err).NotTo(HaveOccurred())
+	_, err = e.st.EnqueueTurn(context.Background(), s.ID, "follow up")
+	g.Expect(err).NotTo(HaveOccurred())
+	_, err = e.runActive(t, context.Background(), s.ID)
+	g.Expect(err).NotTo(HaveOccurred())
 	cmd, _ := e.fleet.Command(s.ID, "turn-2")
 	i := slices.Index(cmd.Argv, "--resume")
-	if i < 0 || cmd.Argv[i+1] != testutil.ClaudeSessionID || cmd.Argv[len(cmd.Argv)-1] != "follow up" {
-		t.Errorf("turn 2 argv: %v", cmd.Argv)
-	}
+	g.Expect(i).To(BeNumerically(">=", 0), "turn 2 argv: %v", cmd.Argv)
+	g.Expect(cmd.Argv[i+1]).To(Equal(testutil.ClaudeSessionID), "turn 2 argv")
+	g.Expect(cmd.Argv[len(cmd.Argv)-1]).To(Equal("follow up"), "turn 2 argv")
 }
 
 func TestReattachAfterCrash(t *testing.T) {
 	t.Parallel()
+	g := NewWithT(t)
 	e := newEnv(t)
 	e.fleet.Program = turnPrograms(testutil.Program{
 		testutil.Line(testutil.ClaudeInit),
@@ -275,23 +258,19 @@ func TestReattachAfterCrash(t *testing.T) {
 			cancel()
 		}
 	}
-	if _, err := e.runActive(t, ctx, s.ID); !errors.Is(err, context.Canceled) {
-		t.Fatalf("first run: want context.Canceled, got %v", err)
-	}
+	_, err := e.runActive(t, ctx, s.ID)
+	g.Expect(err).To(MatchError(context.Canceled), "first run")
 	tn := testutil.MustTurn(t, e.st, s.ID, 1)
-	if tn.Status != session.TurnRunning || tn.LogOffset != consumed || tn.ErrOffset != int64(len("first stderr\n")) {
-		t.Fatalf("after crash: %+v", tn)
-	}
+	g.Expect(tn.Status).To(Equal(session.TurnRunning), "after crash")
+	g.Expect(tn.LogOffset).To(Equal(consumed), "after crash")
+	g.Expect(tn.ErrOffset).To(Equal(int64(len("first stderr\n"))), "after crash")
 
-	if _, err := e.runActive(t, context.Background(), s.ID); err != nil {
-		t.Fatalf("reattach: %v", err)
-	}
-	if n := e.fleet.Starts(s.ID); n != 1 {
-		t.Errorf("processes started: %d, want 1", n)
-	}
-	if tn := testutil.MustTurn(t, e.st, s.ID, 1); tn.Status != session.TurnComplete || tn.Result != "ok" {
-		t.Errorf("turn: %+v", tn)
-	}
+	_, err = e.runActive(t, context.Background(), s.ID)
+	g.Expect(err).NotTo(HaveOccurred(), "reattach")
+	g.Expect(e.fleet.Starts(s.ID)).To(Equal(1), "processes started")
+	tn = testutil.MustTurn(t, e.st, s.ID, 1)
+	g.Expect(tn.Status).To(Equal(session.TurnComplete))
+	g.Expect(tn.Result).To(Equal("ok"))
 	var turnEvents []evSummary
 	for _, ev := range summarize(testutil.MustEvents(t, e.st, s.ID)) {
 		if ev.kind == store.EventHarness || ev.kind == store.EventStderr {
@@ -305,12 +284,8 @@ func TestReattachAfterCrash(t *testing.T) {
 		{"harness", "result"},
 		{"stderr", "second stderr"},
 	}
-	if !slices.Equal(turnEvents, want) {
-		t.Errorf("turn events:\n got %v\nwant %v", turnEvents, want)
-	}
-	if st := testutil.Statuses(testutil.MustEvents(t, e.st, s.ID)); !slices.Equal(st, []string{"pending", "provisioning", "idle", "running", "idle"}) {
-		t.Errorf("session statuses: %v", st)
-	}
+	g.Expect(turnEvents).To(Equal(want), "turn events")
+	g.Expect(testutil.Statuses(testutil.MustEvents(t, e.st, s.ID))).To(Equal([]string{"pending", "provisioning", "idle", "running", "idle"}), "session statuses")
 }
 
 // stopOnFirstRead runs fn once, on the first stdout read of the turn.
@@ -344,6 +319,7 @@ func TestStopRequested(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
+			g := NewWithT(t)
 			e := newEnv(t)
 			e.fleet.Program = turnPrograms(blockingTurn(tc.ignoreTerm))
 			s := e.provisioned(t, testutil.Spec(session.HarnessClaude))
@@ -353,29 +329,25 @@ func TestStopRequested(t *testing.T) {
 				}
 			})
 			start := time.Now()
-			if _, err := e.runActive(t, context.Background(), s.ID); err != nil {
-				t.Fatal(err)
-			}
+			_, err := e.runActive(t, context.Background(), s.ID)
+			g.Expect(err).NotTo(HaveOccurred())
 			cmd, _ := e.fleet.Command(s.ID, "turn-1")
-			if !slices.Equal(cmd.Signals, tc.signals) {
-				t.Errorf("signals %v, want %v", cmd.Signals, tc.signals)
-			}
-			if tc.ignoreTerm && time.Since(start) < e.ops.StopGrace {
-				t.Errorf("KILL before the grace period")
+			g.Expect(cmd.Signals).To(Equal(tc.signals), "signals")
+			if tc.ignoreTerm {
+				g.Expect(time.Since(start)).To(BeNumerically(">=", e.ops.StopGrace), "KILL before the grace period")
 			}
 			tn := testutil.MustTurn(t, e.st, s.ID, 1)
-			if tn.Status != session.TurnStopped || tn.Error != "stopped by engineer" || tn.Result != "ok" {
-				t.Errorf("turn: %+v", tn)
-			}
-			if st := testutil.MustSession(t, e.st, s.ID).Status; st != session.StatusIdle {
-				t.Errorf("session status %q", st)
-			}
+			g.Expect(tn.Status).To(Equal(session.TurnStopped))
+			g.Expect(tn.Error).To(Equal("stopped by engineer"))
+			g.Expect(tn.Result).To(Equal("ok"))
+			g.Expect(testutil.MustSession(t, e.st, s.ID).Status).To(Equal(session.StatusIdle), "session status")
 		})
 	}
 }
 
 func TestTokenBudgetExhausted(t *testing.T) {
 	t.Parallel()
+	g := NewWithT(t)
 	e := newEnv(t)
 	e.fleet.Program = turnPrograms(blockingTurn(false))
 	spec := testutil.Spec(session.HarnessClaude)
@@ -386,19 +358,14 @@ func TestTokenBudgetExhausted(t *testing.T) {
 			t.Error(err)
 		}
 	})
-	if _, err := e.runActive(t, context.Background(), s.ID); err != nil {
-		t.Fatal(err)
-	}
+	_, err := e.runActive(t, context.Background(), s.ID)
+	g.Expect(err).NotTo(HaveOccurred())
 	tn := testutil.MustTurn(t, e.st, s.ID, 1)
-	if tn.Status != session.TurnLimitExceeded || tn.Error != "session token budget exhausted" {
-		t.Errorf("turn: %+v", tn)
-	}
-	if cmd, _ := e.fleet.Command(s.ID, "turn-1"); !slices.Equal(cmd.Signals, []string{"TERM"}) {
-		t.Errorf("signals %v", cmd.Signals)
-	}
-	if st := testutil.MustSession(t, e.st, s.ID).Status; st != session.StatusIdle {
-		t.Errorf("session status %q", st)
-	}
+	g.Expect(tn.Status).To(Equal(session.TurnLimitExceeded))
+	g.Expect(tn.Error).To(Equal("session token budget exhausted"))
+	cmd, _ := e.fleet.Command(s.ID, "turn-1")
+	g.Expect(cmd.Signals).To(Equal([]string{"TERM"}), "signals")
+	g.Expect(testutil.MustSession(t, e.st, s.ID).Status).To(Equal(session.StatusIdle), "session status")
 }
 
 func TestTurnOutcomes(t *testing.T) {
@@ -431,19 +398,16 @@ func TestTurnOutcomes(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
+			g := NewWithT(t)
 			e := newEnv(t)
 			e.fleet.Program = turnPrograms(tc.prog)
 			s := e.provisioned(t, testutil.Spec(session.HarnessClaude))
-			if _, err := e.runActive(t, context.Background(), s.ID); err != nil {
-				t.Fatal(err)
-			}
+			_, err := e.runActive(t, context.Background(), s.ID)
+			g.Expect(err).NotTo(HaveOccurred())
 			tn := testutil.MustTurn(t, e.st, s.ID, 1)
-			if tn.Status != tc.status || tn.Error != tc.errMsg {
-				t.Errorf("turn: status %q error %q, want %q %q", tn.Status, tn.Error, tc.status, tc.errMsg)
-			}
-			if st := testutil.MustSession(t, e.st, s.ID).Status; st != session.StatusIdle {
-				t.Errorf("session status %q", st)
-			}
+			g.Expect(tn.Status).To(Equal(tc.status))
+			g.Expect(tn.Error).To(Equal(tc.errMsg))
+			g.Expect(testutil.MustSession(t, e.st, s.ID).Status).To(Equal(session.StatusIdle), "session status")
 		})
 	}
 }
@@ -452,6 +416,7 @@ func TestTurnOutcomes(t *testing.T) {
 // the tail must keep reading until sandboxd returns no data, not stop after the first chunk.
 func TestOutputLargerThanOneChunkAfterExit(t *testing.T) {
 	t.Parallel()
+	g := NewWithT(t)
 	e := newEnv(t)
 	big := `{"type":"assistant","message":{"content":[{"type":"text","text":"` + strings.Repeat("x", 600<<10) + `"}]}}`
 	e.fleet.Program = turnPrograms(testutil.Program{
@@ -462,16 +427,16 @@ func TestOutputLargerThanOneChunkAfterExit(t *testing.T) {
 		testutil.Exit(0),
 	})
 	s := e.provisioned(t, testutil.Spec(session.HarnessClaude))
-	if _, err := e.runActive(t, context.Background(), s.ID); err != nil {
-		t.Fatal(err)
-	}
-	if tn := testutil.MustTurn(t, e.st, s.ID, 1); tn.Status != session.TurnComplete || tn.Result != "ok" {
-		t.Errorf("turn: status %q error %q", tn.Status, tn.Error)
-	}
+	_, err := e.runActive(t, context.Background(), s.ID)
+	g.Expect(err).NotTo(HaveOccurred())
+	tn := testutil.MustTurn(t, e.st, s.ID, 1)
+	g.Expect(tn.Status).To(Equal(session.TurnComplete), "turn error %q", tn.Error)
+	g.Expect(tn.Result).To(Equal("ok"))
 }
 
 func TestTTLExpiryStopsRunningTurn(t *testing.T) {
 	t.Parallel()
+	g := NewWithT(t)
 	e := newEnv(t)
 	e.fleet.Program = turnPrograms(blockingTurn(false))
 	s := e.provisioned(t, testutil.Spec(session.HarnessClaude))
@@ -480,46 +445,36 @@ func TestTTLExpiryStopsRunningTurn(t *testing.T) {
 			t.Error(err)
 		}
 	})
-	if _, err := e.runActive(t, context.Background(), s.ID); err != nil {
-		t.Fatal(err)
-	}
-	if tn := testutil.MustTurn(t, e.st, s.ID, 1); tn.Status != session.TurnStopped || tn.Error != "session ttl expired" {
-		t.Errorf("turn: %+v", tn)
-	}
-	if st := testutil.MustSession(t, e.st, s.ID).Status; st != session.StatusStopping {
-		t.Errorf("session status %q, want stopping", st)
-	}
+	_, err := e.runActive(t, context.Background(), s.ID)
+	g.Expect(err).NotTo(HaveOccurred())
+	tn := testutil.MustTurn(t, e.st, s.ID, 1)
+	g.Expect(tn.Status).To(Equal(session.TurnStopped))
+	g.Expect(tn.Error).To(Equal("session ttl expired"))
+	g.Expect(testutil.MustSession(t, e.st, s.ID).Status).To(Equal(session.StatusStopping), "session status")
 }
 
 func TestProvisionIdempotent(t *testing.T) {
 	t.Parallel()
+	g := NewWithT(t)
 	e := newEnv(t)
 	spec := testutil.Spec(session.HarnessCodex)
 	spec.Repo = "octo/hello"
 	s := testutil.CreateSession(t, e.st, "alice", spec, "hi")
 	for i := range 2 {
-		if err := e.ops.Provision(context.Background(), s); err != nil {
-			t.Fatalf("provision %d: %v", i+1, err)
-		}
+		g.Expect(e.ops.Provision(context.Background(), s)).To(Succeed(), "provision %d", i+1)
 	}
-	if n := e.fleet.Count(); n != 1 {
-		t.Errorf("sandboxes: %d", n)
-	}
-	if n := e.fleet.Starts(s.ID); n != 1 {
-		t.Errorf("clone started %d times", n)
-	}
+	g.Expect(e.fleet.Count()).To(Equal(1), "sandboxes")
+	g.Expect(e.fleet.Starts(s.ID)).To(Equal(1), "clone started more than once")
 	cmd, _ := e.fleet.Command(s.ID, "provision-clone")
-	if !slices.Contains(cmd.Argv, "https://github.com/octo/hello.git") {
-		t.Errorf("clone argv: %v", cmd.Argv)
-	}
+	g.Expect(cmd.Argv).To(ContainElement("https://github.com/octo/hello.git"), "clone argv")
 	s = testutil.MustSession(t, e.st, s.ID)
-	if s.Status != session.StatusIdle || s.ContainerID != e.fleet.Name(s.ID) {
-		t.Errorf("session: status %q container %q", s.Status, s.ContainerID)
-	}
+	g.Expect(s.Status).To(Equal(session.StatusIdle))
+	g.Expect(s.ContainerID).To(Equal(e.fleet.Name(s.ID)))
 }
 
 func TestProvisionCloneFailureIsPermanent(t *testing.T) {
 	t.Parallel()
+	g := NewWithT(t)
 	e := newEnv(t)
 	e.fleet.Program = func(_ uuid.UUID, req sandboxclient.CommandRequest) testutil.Program {
 		return testutil.Program{testutil.Stderr("Cloning into 'work'...\nfatal: repository not found\n"), testutil.Exit(128)}
@@ -528,64 +483,53 @@ func TestProvisionCloneFailureIsPermanent(t *testing.T) {
 	spec.Repo = "octo/missing"
 	s := testutil.CreateSession(t, e.st, "alice", spec, "hi")
 	err := e.ops.Provision(context.Background(), s)
-	if !ops.IsPermanent(err) || !strings.Contains(err.Error(), "git clone exited 128: fatal: repository not found") {
-		t.Fatalf("want permanent clone error, got %v", err)
-	}
+	g.Expect(err).To(MatchError(ContainSubstring("git clone exited 128: fatal: repository not found")))
+	g.Expect(ops.IsPermanent(err)).To(BeTrue(), "want permanent clone error, got %v", err)
 }
 
 func TestCleanupIdempotent(t *testing.T) {
 	t.Parallel()
+	g := NewWithT(t)
 	e := newEnv(t)
 	s := e.provisioned(t, testutil.Spec(session.HarnessClaude))
-	if _, err := e.st.SetStatus(context.Background(), s.ID, []string{session.StatusIdle}, session.StatusStopping, "test"); err != nil {
-		t.Fatal(err)
-	}
+	_, err := e.st.SetStatus(context.Background(), s.ID, []string{session.StatusIdle}, session.StatusStopping, "test")
+	g.Expect(err).NotTo(HaveOccurred())
 	for range 2 {
-		if err := e.ops.Cleanup(context.Background(), s); err != nil {
-			t.Fatal(err)
-		}
+		g.Expect(e.ops.Cleanup(context.Background(), s)).To(Succeed())
 	}
-	if e.fleet.Exists(s.ID) {
-		t.Error("sandbox not deleted")
-	}
+	g.Expect(e.fleet.Exists(s.ID)).To(BeFalse(), "sandbox not deleted")
 	s = testutil.MustSession(t, e.st, s.ID)
-	if s.Status != session.StatusStopped || s.EndedAt == nil {
-		t.Errorf("session: %q ended %v", s.Status, s.EndedAt)
-	}
-	if tn := testutil.MustTurn(t, e.st, s.ID, 1); tn.Status != session.TurnStopped {
-		t.Errorf("queued turn not cancelled: %q", tn.Status)
-	}
+	g.Expect(s.Status).To(Equal(session.StatusStopped))
+	g.Expect(s.EndedAt).NotTo(BeNil())
+	g.Expect(testutil.MustTurn(t, e.st, s.ID, 1).Status).To(Equal(session.TurnStopped), "queued turn not cancelled")
 }
 
 func TestIsLost(t *testing.T) {
 	t.Parallel()
+	g := NewWithT(t)
 	e := newEnv(t)
 	s := e.provisioned(t, testutil.Spec(session.HarnessClaude))
-	if lost, err := e.ops.IsLost(context.Background(), s); lost || err != nil {
-		t.Errorf("live sandbox: lost=%v err=%v", lost, err)
-	}
+	lost, err := e.ops.IsLost(context.Background(), s)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(lost).To(BeFalse(), "live sandbox")
 	e.fleet.Lose(s.ID)
-	if lost, err := e.ops.IsLost(context.Background(), s); !lost || err != nil {
-		t.Errorf("missing sandbox: lost=%v err=%v", lost, err)
-	}
+	lost, err = e.ops.IsLost(context.Background(), s)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(lost).To(BeTrue(), "missing sandbox")
 }
 
 // A worker that read the session as idle just before DELETE moved it to stopping must not start
 // the harness, but RunTurn ignores that its idle→running transition did not apply.
 func TestRunTurnDoesNotStartOnStoppingSession(t *testing.T) {
 	t.Parallel()
+	g := NewWithT(t)
 	e := newEnv(t)
 	e.fleet.Program = turnPrograms(claudeHappy())
 	s := e.provisioned(t, testutil.Spec(session.HarnessClaude))
 	tn, err := e.st.ActiveTurn(context.Background(), s.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := e.st.SetStatus(context.Background(), s.ID, []string{session.StatusIdle}, session.StatusStopping, "deleted by alice"); err != nil {
-		t.Fatal(err)
-	}
+	g.Expect(err).NotTo(HaveOccurred())
+	_, err = e.st.SetStatus(context.Background(), s.ID, []string{session.StatusIdle}, session.StatusStopping, "deleted by alice")
+	g.Expect(err).NotTo(HaveOccurred())
 	_ = e.ops.RunTurn(context.Background(), s, tn) // s is the stale idle snapshot
-	if n := e.fleet.Starts(s.ID); n != 0 {
-		t.Errorf("harness started on a stopping session (%d processes)", n)
-	}
+	g.Expect(e.fleet.Starts(s.ID)).To(BeZero(), "harness started on a stopping session")
 }

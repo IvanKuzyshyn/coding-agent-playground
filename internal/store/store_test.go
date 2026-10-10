@@ -2,9 +2,9 @@ package store_test
 
 import (
 	"context"
-	"errors"
-	"slices"
 	"testing"
+
+	. "github.com/onsi/gomega"
 
 	"terrarium/internal/session"
 	"terrarium/internal/store"
@@ -15,104 +15,96 @@ func TestMain(m *testing.M) { testutil.Main(m) }
 
 func TestMigrateIsIdempotent(t *testing.T) {
 	t.Parallel()
+	g := NewWithT(t)
 	st := testutil.NewStore(t)
 	applied, err := st.Migrate(context.Background())
-	if err != nil || len(applied) != 0 {
-		t.Errorf("re-migrate applied %v, err %v", applied, err)
-	}
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(applied).To(BeEmpty(), "re-migrate applied migrations")
 }
 
 func TestSetStatusIsConditional(t *testing.T) {
 	t.Parallel()
+	g := NewWithT(t)
 	st := testutil.NewStore(t)
 	ctx := context.Background()
 	s := testutil.CreateSession(t, st, "alice", testutil.Spec(session.HarnessClaude), "hi")
 
-	if ok, err := st.SetStatus(ctx, s.ID, []string{session.StatusIdle}, session.StatusRunning, "x"); ok || err != nil {
-		t.Errorf("transition from the wrong state applied: %v %v", ok, err)
-	}
-	if ok, err := st.SetStatus(ctx, s.ID, []string{session.StatusPending}, session.StatusStopping, "x"); !ok || err != nil {
-		t.Fatalf("pending→stopping: %v %v", ok, err)
-	}
-	if ok, _ := st.Fail(ctx, s.ID, "boom"); ok {
-		t.Error("Fail applied to a stopping session")
-	}
-	if got := testutil.MustSession(t, st, s.ID); got.Error != "" {
-		t.Errorf("Fail wrote an error on a stopping session: %q", got.Error)
-	}
-	if ok, _ := st.SetStatus(ctx, s.ID, []string{session.StatusStopping}, session.StatusStopped, "x"); !ok {
-		t.Fatal("stopping→stopped")
-	}
-	got := testutil.MustSession(t, st, s.ID)
-	if got.EndedAt == nil {
-		t.Error("ended_at not set")
-	}
+	ok, err := st.SetStatus(ctx, s.ID, []string{session.StatusIdle}, session.StatusRunning, "x")
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(ok).To(BeFalse(), "transition from the wrong state applied")
+
+	ok, err = st.SetStatus(ctx, s.ID, []string{session.StatusPending}, session.StatusStopping, "x")
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(ok).To(BeTrue(), "pending→stopping")
+
+	ok, _ = st.Fail(ctx, s.ID, "boom")
+	g.Expect(ok).To(BeFalse(), "Fail applied to a stopping session")
+	g.Expect(testutil.MustSession(t, st, s.ID).Error).To(BeEmpty(), "Fail wrote an error on a stopping session")
+
+	ok, _ = st.SetStatus(ctx, s.ID, []string{session.StatusStopping}, session.StatusStopped, "x")
+	g.Expect(ok).To(BeTrue(), "stopping→stopped")
+	g.Expect(testutil.MustSession(t, st, s.ID).EndedAt).NotTo(BeNil(), "ended_at not set")
 	// Only applied transitions are recorded.
-	if want := []string{"pending", "stopping", "stopped"}; !slices.Equal(testutil.Statuses(testutil.MustEvents(t, st, s.ID)), want) {
-		t.Errorf("statuses %v", testutil.Statuses(testutil.MustEvents(t, st, s.ID)))
-	}
-	if _, err := st.EnqueueTurn(ctx, s.ID, "late"); !errors.Is(err, store.ErrConflict) {
-		t.Errorf("enqueue on stopped session: %v", err)
-	}
-	if n, err := st.CountActiveByOwner(ctx, "alice"); n != 0 || err != nil {
-		t.Errorf("active count %d %v", n, err)
-	}
+	g.Expect(testutil.Statuses(testutil.MustEvents(t, st, s.ID))).To(Equal([]string{"pending", "stopping", "stopped"}))
+
+	_, err = st.EnqueueTurn(ctx, s.ID, "late")
+	g.Expect(err).To(MatchError(store.ErrConflict), "enqueue on stopped session")
+
+	n, err := st.CountActiveByOwner(ctx, "alice")
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(n).To(BeZero(), "active count")
 }
 
 func TestTurnTerminalWriteOnce(t *testing.T) {
 	t.Parallel()
+	g := NewWithT(t)
 	st := testutil.NewStore(t)
 	ctx := context.Background()
 	s := testutil.CreateSession(t, st, "alice", testutil.Spec(session.HarnessClaude), "hi")
-	if _, err := st.EnqueueTurn(ctx, s.ID, "second"); err != nil {
-		t.Fatal(err)
-	}
-	if ok, _ := st.RequestStopCurrentTurn(ctx, s.ID); ok {
-		t.Error("stop requested with no running turn")
-	}
-	if ok, err := st.StartTurn(ctx, s.ID, 1, "turn-1"); !ok || err != nil {
-		t.Fatalf("start: %v %v", ok, err)
-	}
-	if ok, _ := st.StartTurn(ctx, s.ID, 1, "turn-1"); ok {
-		t.Error("turn started twice")
-	}
-	if tn, _ := st.ActiveTurn(ctx, s.ID); tn.Seq != 1 {
-		t.Errorf("active turn %d, want running turn 1", tn.Seq)
-	}
-	if ok, _ := st.FinishTurn(ctx, s.ID, 1, session.TurnComplete, "ok", "", map[string]int{"input_tokens": 1}); !ok {
-		t.Fatal("finish")
-	}
-	if ok, _ := st.FinishTurn(ctx, s.ID, 1, session.TurnFailed, "", "late", nil); ok {
-		t.Error("second terminal write applied")
-	}
-	if tn := testutil.MustTurn(t, st, s.ID, 1); tn.Status != session.TurnComplete || tn.Result != "ok" || string(tn.Usage) != `{"input_tokens": 1}` {
-		t.Errorf("turn 1: %+v usage %s", tn, tn.Usage)
-	}
-	if tn, _ := st.ActiveTurn(ctx, s.ID); tn.Seq != 2 {
-		t.Errorf("active turn %d, want queued turn 2", tn.Seq)
-	}
-	if err := st.CancelQueuedTurns(ctx, s.ID, session.TurnStopped, "ended"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := st.ActiveTurn(ctx, s.ID); !errors.Is(err, store.ErrNotFound) {
-		t.Errorf("active turn after cancel: %v", err)
-	}
-	if tn := testutil.MustTurn(t, st, s.ID, 1); tn.Status != session.TurnComplete {
-		t.Errorf("cancel touched a finished turn: %q", tn.Status)
-	}
+	_, err := st.EnqueueTurn(ctx, s.ID, "second")
+	g.Expect(err).NotTo(HaveOccurred())
+
+	ok, _ := st.RequestStopCurrentTurn(ctx, s.ID)
+	g.Expect(ok).To(BeFalse(), "stop requested with no running turn")
+
+	ok, err = st.StartTurn(ctx, s.ID, 1, "turn-1")
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(ok).To(BeTrue(), "start")
+
+	ok, _ = st.StartTurn(ctx, s.ID, 1, "turn-1")
+	g.Expect(ok).To(BeFalse(), "turn started twice")
+
+	tn, _ := st.ActiveTurn(ctx, s.ID)
+	g.Expect(tn.Seq).To(Equal(1), "active turn, want running turn 1")
+
+	ok, _ = st.FinishTurn(ctx, s.ID, 1, session.TurnComplete, "ok", "", map[string]int{"input_tokens": 1})
+	g.Expect(ok).To(BeTrue(), "finish")
+
+	ok, _ = st.FinishTurn(ctx, s.ID, 1, session.TurnFailed, "", "late", nil)
+	g.Expect(ok).To(BeFalse(), "second terminal write applied")
+
+	tn = testutil.MustTurn(t, st, s.ID, 1)
+	g.Expect(tn.Status).To(Equal(session.TurnComplete))
+	g.Expect(tn.Result).To(Equal("ok"))
+	g.Expect(string(tn.Usage)).To(Equal(`{"input_tokens": 1}`))
+
+	tn, _ = st.ActiveTurn(ctx, s.ID)
+	g.Expect(tn.Seq).To(Equal(2), "active turn, want queued turn 2")
+
+	g.Expect(st.CancelQueuedTurns(ctx, s.ID, session.TurnStopped, "ended")).To(Succeed())
+	_, err = st.ActiveTurn(ctx, s.ID)
+	g.Expect(err).To(MatchError(store.ErrNotFound), "active turn after cancel")
+	g.Expect(testutil.MustTurn(t, st, s.ID, 1).Status).To(Equal(session.TurnComplete), "cancel touched a finished turn")
 }
 
 func TestHarnessSessionSetOnce(t *testing.T) {
 	t.Parallel()
+	g := NewWithT(t)
 	st := testutil.NewStore(t)
 	ctx := context.Background()
 	s := testutil.CreateSession(t, st, "alice", testutil.Spec(session.HarnessClaude), "hi")
 	for _, hs := range []string{"first", "second"} {
-		if err := st.SetHarnessSession(ctx, s.ID, hs); err != nil {
-			t.Fatal(err)
-		}
+		g.Expect(st.SetHarnessSession(ctx, s.ID, hs)).To(Succeed())
 	}
-	if got := testutil.MustSession(t, st, s.ID).HarnessSession; got != "first" {
-		t.Errorf("harness session %q", got)
-	}
+	g.Expect(testutil.MustSession(t, st, s.ID).HarnessSession).To(Equal("first"))
 }

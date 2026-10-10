@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	. "github.com/onsi/gomega"
 
 	"terrarium/internal/api"
 	"terrarium/internal/catalog"
@@ -123,25 +125,24 @@ func TestAuth(t *testing.T) {
 		{"empty bearer", "Bearer "},
 		{"unknown token", "Bearer nope"},
 	} {
-		req, _ := http.NewRequest(http.MethodGet, e.srv.URL+"/sessions", nil)
-		if tc.header != "" {
-			req.Header.Set("Authorization", tc.header)
-		}
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		resp.Body.Close()
-		if resp.StatusCode != http.StatusUnauthorized {
-			t.Errorf("%s: %d", tc.name, resp.StatusCode)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			g := NewWithT(t)
+			req, _ := http.NewRequest(http.MethodGet, e.srv.URL+"/sessions", nil)
+			if tc.header != "" {
+				req.Header.Set("Authorization", tc.header)
+			}
+			resp, err := http.DefaultClient.Do(req)
+			g.Expect(err).NotTo(HaveOccurred())
+			resp.Body.Close()
+			g.Expect(resp.StatusCode).To(Equal(http.StatusUnauthorized))
+		})
 	}
-	if code, body := e.do(t, http.MethodGet, "/whoami", alice, nil); code != http.StatusOK || body["name"] != "alice" {
-		t.Errorf("whoami: %d %v", code, body)
-	}
-	if code, _ := e.do(t, http.MethodGet, "/healthz", "", nil); code != http.StatusOK {
-		t.Errorf("healthz without auth: %d", code)
-	}
+	g := NewWithT(t)
+	code, body := e.do(t, http.MethodGet, "/whoami", alice, nil)
+	g.Expect(code).To(Equal(http.StatusOK), "whoami: %v", body)
+	g.Expect(body).To(HaveKeyWithValue("name", "alice"), "whoami")
+	code, _ = e.do(t, http.MethodGet, "/healthz", "", nil)
+	g.Expect(code).To(Equal(http.StatusOK), "healthz without auth")
 }
 
 func TestCreateValidates(t *testing.T) {
@@ -161,21 +162,26 @@ func TestCreateValidates(t *testing.T) {
 		{"unknown field", map[string]string{"name": "test run", "harness": "codex", "prompt": "hi", "image": "evil"}},
 		{"not json", "{"},
 	} {
-		if code, body := e.do(t, http.MethodPost, "/sessions", alice, tc.body); code != http.StatusBadRequest {
-			t.Errorf("%s: %d %v", tc.name, code, body)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			code, body := e.do(t, http.MethodPost, "/sessions", alice, tc.body)
+			NewWithT(t).Expect(code).To(Equal(http.StatusBadRequest), "%v", body)
+		})
 	}
+	g := NewWithT(t)
 	code, body := e.do(t, http.MethodPost, "/sessions", alice, map[string]string{"name": "test run", "harness": "codex", "prompt": "hi", "repo": "octo/hello.go", "preset": "explore"})
-	if code != http.StatusAccepted || body["status"] != "pending" || body["owner"] != "alice" || body["preset"] != "explore" || body["repo"] != "octo/hello.go" {
-		t.Fatalf("create: %d %v", code, body)
-	}
+	g.Expect(code).To(Equal(http.StatusAccepted), "create: %v", body)
+	g.Expect(body).To(And(
+		HaveKeyWithValue("status", "pending"),
+		HaveKeyWithValue("owner", "alice"),
+		HaveKeyWithValue("preset", "explore"),
+		HaveKeyWithValue("repo", "octo/hello.go"),
+	), "create")
 	s := testutil.MustSession(t, e.st, uuid.MustParse(body["id"].(string)))
-	if s.Spec.Limits.TokenBudget != 500000 || s.Spec.Harness != session.HarnessCodex {
-		t.Errorf("spec not frozen from preset: %+v", s.Spec)
-	}
-	if tn := testutil.MustTurn(t, e.st, s.ID, 1); tn.Prompt != "hi" || tn.Status != session.TurnQueued {
-		t.Errorf("turn 1: %+v", tn)
-	}
+	g.Expect(s.Spec.Limits.TokenBudget).To(BeEquivalentTo(500000), "spec not frozen from preset: %+v", s.Spec)
+	g.Expect(s.Spec.Harness).To(Equal(session.HarnessCodex), "spec not frozen from preset: %+v", s.Spec)
+	tn := testutil.MustTurn(t, e.st, s.ID, 1)
+	g.Expect(tn.Prompt).To(Equal("hi"), "turn 1: %+v", tn)
+	g.Expect(tn.Status).To(Equal(session.TurnQueued), "turn 1: %+v", tn)
 }
 
 // Everyone can read every session; only the user who started one can change it.
@@ -195,39 +201,35 @@ func TestOtherUsersSessionIsReadOnly(t *testing.T) {
 		{http.MethodPost, p + "/turns", map[string]string{"prompt": "x"}, http.StatusForbidden},
 		{http.MethodPost, p + "/turns/current/stop", nil, http.StatusForbidden},
 	} {
-		if code, _ := e.do(t, tc.method, tc.path, bob, tc.body); code != tc.want {
-			t.Errorf("bob %s %s: %d want %d", tc.method, tc.path, code, tc.want)
-		}
+		t.Run(tc.method+" "+strings.TrimPrefix(tc.path, p), func(t *testing.T) {
+			code, _ := e.do(t, tc.method, tc.path, bob, tc.body)
+			NewWithT(t).Expect(code).To(Equal(tc.want), "bob %s %s", tc.method, tc.path)
+		})
 	}
-	if code, _ := e.do(t, http.MethodGet, "/sessions/not-a-uuid", alice, nil); code != http.StatusNotFound {
-		t.Errorf("bad id: %d", code)
-	}
-	if code, _ := e.do(t, http.MethodGet, "/sessions/"+uuid.NewString(), alice, nil); code != http.StatusNotFound {
-		t.Errorf("unknown id: %d", code)
-	}
-	if code, body := e.do(t, http.MethodGet, "/sessions", bob, nil); code != http.StatusOK || len(body["sessions"].([]any)) != 1 {
-		t.Errorf("bob's list should include alice's session: %d %v", code, body)
-	}
-	if _, body := e.do(t, http.MethodGet, "/sessions?owner=bob", bob, nil); body["total"] != float64(0) {
-		t.Errorf("owner filter: %v", body)
-	}
-	if st := testutil.MustSession(t, e.st, id).Status; st != session.StatusPending {
-		t.Errorf("bob's DELETE changed alice's session: %q", st)
-	}
-	code, body := e.do(t, http.MethodGet, p, alice, nil)
-	if code != http.StatusOK || len(body["turns"].([]any)) != 1 {
-		t.Errorf("owner get: %d %v", code, body)
-	}
+	g := NewWithT(t)
+	code, _ := e.do(t, http.MethodGet, "/sessions/not-a-uuid", alice, nil)
+	g.Expect(code).To(Equal(http.StatusNotFound), "bad id")
+	code, _ = e.do(t, http.MethodGet, "/sessions/"+uuid.NewString(), alice, nil)
+	g.Expect(code).To(Equal(http.StatusNotFound), "unknown id")
+	code, body := e.do(t, http.MethodGet, "/sessions", bob, nil)
+	g.Expect(code).To(Equal(http.StatusOK), "bob's list: %v", body)
+	g.Expect(body["sessions"]).To(HaveLen(1), "bob's list should include alice's session")
+	_, body = e.do(t, http.MethodGet, "/sessions?owner=bob", bob, nil)
+	g.Expect(body).To(HaveKeyWithValue("total", float64(0)), "owner filter")
+	g.Expect(testutil.MustSession(t, e.st, id).Status).To(Equal(session.StatusPending), "bob's DELETE changed alice's session")
+	code, body = e.do(t, http.MethodGet, p, alice, nil)
+	g.Expect(code).To(Equal(http.StatusOK), "owner get: %v", body)
+	g.Expect(body["turns"]).To(HaveLen(1), "owner get")
 }
 
 func TestActiveSessionCap(t *testing.T) {
 	t.Parallel()
+	g := NewWithT(t)
 	e := newEnv(t, 10*time.Millisecond)
 	first := e.create(t, alice)
 	e.create(t, alice)
-	if code, _ := e.do(t, http.MethodPost, "/sessions", alice, map[string]string{"name": "test run", "harness": "codex", "prompt": "hi"}); code != http.StatusTooManyRequests {
-		t.Errorf("third session: %d", code)
-	}
+	code, _ := e.do(t, http.MethodPost, "/sessions", alice, map[string]string{"name": "test run", "harness": "codex", "prompt": "hi"})
+	g.Expect(code).To(Equal(http.StatusTooManyRequests), "third session")
 	e.create(t, bob) // the cap is per engineer
 	e.stop(t, first)
 	e.create(t, alice)
@@ -235,50 +237,43 @@ func TestActiveSessionCap(t *testing.T) {
 
 func TestTurnsAndStop(t *testing.T) {
 	t.Parallel()
+	g := NewWithT(t)
 	e := newEnv(t, 10*time.Millisecond)
 	id := e.create(t, alice)
 	p := "/sessions/" + id.String()
 
-	if code, body := e.do(t, http.MethodPost, p+"/turns", alice, map[string]string{"prompt": "next"}); code != http.StatusAccepted || body["seq"] != 2.0 || body["status"] != "queued" {
-		t.Errorf("follow-up on pending session: %d %v", code, body)
-	}
-	if code, _ := e.do(t, http.MethodPost, p+"/turns", alice, map[string]string{"prompt": ""}); code != http.StatusBadRequest {
-		t.Errorf("empty follow-up: %d", code)
-	}
-	if code, _ := e.do(t, http.MethodPost, p+"/turns/current/stop", alice, nil); code != http.StatusConflict {
-		t.Errorf("stop without a running turn: %d", code)
-	}
-	if _, err := e.st.StartTurn(context.Background(), id, 1, "turn-1"); err != nil {
-		t.Fatal(err)
-	}
-	if code, _ := e.do(t, http.MethodPost, p+"/turns/current/stop", alice, nil); code != http.StatusAccepted {
-		t.Errorf("stop running turn: %d", code)
-	}
-	if !testutil.MustTurn(t, e.st, id, 1).StopRequested {
-		t.Error("stop not recorded")
-	}
+	code, body := e.do(t, http.MethodPost, p+"/turns", alice, map[string]string{"prompt": "next"})
+	g.Expect(code).To(Equal(http.StatusAccepted), "follow-up on pending session: %v", body)
+	g.Expect(body).To(And(HaveKeyWithValue("seq", 2.0), HaveKeyWithValue("status", "queued")), "follow-up on pending session")
+	code, _ = e.do(t, http.MethodPost, p+"/turns", alice, map[string]string{"prompt": ""})
+	g.Expect(code).To(Equal(http.StatusBadRequest), "empty follow-up")
+	code, _ = e.do(t, http.MethodPost, p+"/turns/current/stop", alice, nil)
+	g.Expect(code).To(Equal(http.StatusConflict), "stop without a running turn")
+	_, err := e.st.StartTurn(context.Background(), id, 1, "turn-1")
+	g.Expect(err).NotTo(HaveOccurred())
+	code, _ = e.do(t, http.MethodPost, p+"/turns/current/stop", alice, nil)
+	g.Expect(code).To(Equal(http.StatusAccepted), "stop running turn")
+	g.Expect(testutil.MustTurn(t, e.st, id, 1).StopRequested).To(BeTrue(), "stop not recorded")
 
-	if code, body := e.do(t, http.MethodDelete, p, alice, nil); code != http.StatusAccepted || body["status"] != "stopping" {
-		t.Errorf("delete: %d %v", code, body)
-	}
-	if code, _ := e.do(t, http.MethodPost, p+"/turns", alice, map[string]string{"prompt": "late"}); code != http.StatusConflict {
-		t.Errorf("follow-up on stopping session: %d", code)
-	}
+	code, body = e.do(t, http.MethodDelete, p, alice, nil)
+	g.Expect(code).To(Equal(http.StatusAccepted), "delete: %v", body)
+	g.Expect(body).To(HaveKeyWithValue("status", "stopping"), "delete")
+	code, _ = e.do(t, http.MethodPost, p+"/turns", alice, map[string]string{"prompt": "late"})
+	g.Expect(code).To(Equal(http.StatusConflict), "follow-up on stopping session")
 	e.setStatus(t, id, []string{session.StatusStopping}, session.StatusStopped)
-	if code, _ := e.do(t, http.MethodPost, p+"/turns", alice, map[string]string{"prompt": "late"}); code != http.StatusConflict {
-		t.Errorf("follow-up on stopped session: %d", code)
-	}
+	code, _ = e.do(t, http.MethodPost, p+"/turns", alice, map[string]string{"prompt": "late"})
+	g.Expect(code).To(Equal(http.StatusConflict), "follow-up on stopped session")
 }
 
 func TestEventsPaging(t *testing.T) {
 	t.Parallel()
+	g := NewWithT(t)
 	e := newEnv(t, 10*time.Millisecond)
 	id := e.create(t, alice)
 	seq := 1
 	for i := range 4 {
-		if err := e.st.AppendEvent(context.Background(), id, store.EventStderr, &seq, map[string]string{"line": strconv.Itoa(i)}); err != nil {
-			t.Fatal(err)
-		}
+		err := e.st.AppendEvent(context.Background(), id, store.EventStderr, &seq, map[string]string{"line": strconv.Itoa(i)})
+		g.Expect(err).NotTo(HaveOccurred())
 	}
 	p := "/sessions/" + id.String() + "/events"
 
@@ -286,32 +281,24 @@ func TestEventsPaging(t *testing.T) {
 	after := 0.0
 	for range 3 {
 		code, body := e.do(t, http.MethodGet, p+"?limit=2&after="+strconv.FormatFloat(after, 'f', 0, 64), alice, nil)
-		if code != http.StatusOK {
-			t.Fatalf("page: %d %v", code, body)
-		}
+		g.Expect(code).To(Equal(http.StatusOK), "page: %v", body)
 		for _, ev := range body["events"].([]any) {
 			ids = append(ids, ev.(map[string]any)["id"].(float64))
 		}
 		after = body["next_after"].(float64)
 	}
-	if len(ids) != 5 {
-		t.Fatalf("paged %d events, want 5 (created + 4 stderr): %v", len(ids), ids)
-	}
+	g.Expect(ids).To(HaveLen(5), "paged events, want created + 4 stderr")
 	for i := 1; i < len(ids); i++ {
-		if ids[i] <= ids[i-1] {
-			t.Errorf("ids not increasing: %v", ids)
-		}
+		g.Expect(ids[i]).To(BeNumerically(">", ids[i-1]), "ids not increasing: %v", ids)
 	}
-	if after != ids[4] {
-		t.Errorf("next_after %v, want %v", after, ids[4])
-	}
+	g.Expect(after).To(Equal(ids[4]), "next_after")
 	code, body := e.do(t, http.MethodGet, p+"?after="+strconv.FormatFloat(after, 'f', 0, 64), alice, nil)
-	if code != http.StatusOK || len(body["events"].([]any)) != 0 || body["next_after"] != after {
-		t.Errorf("past the end: %d %v", code, body)
-	}
-	if code, body := e.do(t, http.MethodGet, p+"?kind=stderr", alice, nil); code != http.StatusOK || len(body["events"].([]any)) != 4 {
-		t.Errorf("kind filter: %d %v", code, body)
-	}
+	g.Expect(code).To(Equal(http.StatusOK), "past the end: %v", body)
+	g.Expect(body["events"]).To(BeEmpty(), "past the end")
+	g.Expect(body).To(HaveKeyWithValue("next_after", after), "past the end")
+	code, body = e.do(t, http.MethodGet, p+"?kind=stderr", alice, nil)
+	g.Expect(code).To(Equal(http.StatusOK), "kind filter: %v", body)
+	g.Expect(body["events"]).To(HaveLen(4), "kind filter")
 }
 
 type sseEvent struct {
@@ -376,6 +363,7 @@ func next(t *testing.T, ch <-chan sseEvent) sseEvent {
 
 func TestEventStream(t *testing.T) {
 	t.Parallel()
+	g := NewWithT(t)
 	e := newEnv(t, 10*time.Millisecond)
 	id := e.create(t, alice)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -383,28 +371,26 @@ func TestEventStream(t *testing.T) {
 
 	ch := e.openSSE(t, ctx, id, "")
 	created := next(t, ch)
-	if created.kind != store.EventLifecycle || created.data.ID != created.id || created.data.SessionID != id {
-		t.Errorf("first event: %+v", created)
-	}
+	g.Expect(created.kind).To(Equal(store.EventLifecycle), "first event: %+v", created)
+	g.Expect(created.data.ID).To(Equal(created.id), "first event: %+v", created)
+	g.Expect(created.data.SessionID).To(Equal(id), "first event: %+v", created)
 	seq := 1
-	if err := e.st.AppendEvent(context.Background(), id, store.EventHarness, &seq, map[string]string{"n": "1"}); err != nil {
-		t.Fatal(err)
-	}
+	err := e.st.AppendEvent(context.Background(), id, store.EventHarness, &seq, map[string]string{"n": "1"})
+	g.Expect(err).NotTo(HaveOccurred())
 	live := next(t, ch)
-	if live.kind != store.EventHarness || live.id <= created.id || *live.data.TurnSeq != 1 {
-		t.Errorf("live event: %+v", live)
-	}
+	g.Expect(live.kind).To(Equal(store.EventHarness), "live event: %+v", live)
+	g.Expect(live.id).To(BeNumerically(">", created.id), "live event: %+v", live)
+	g.Expect(*live.data.TurnSeq).To(Equal(1), "live event: %+v", live)
 
 	// Resume after the created event: only the later one is replayed.
 	resumed := e.openSSE(t, ctx, id, strconv.FormatInt(created.id, 10))
-	if ev := next(t, resumed); ev.id != live.id {
-		t.Errorf("Last-Event-ID resume returned %d, want %d", ev.id, live.id)
-	}
+	g.Expect(next(t, resumed).id).To(Equal(live.id), "Last-Event-ID resume")
 
 	e.stop(t, id)
 	var last sseEvent
 	for _, c := range []<-chan sseEvent{ch, resumed} {
 		var got []sseEvent
+		timedOut := false
 		timeout := time.After(5 * time.Second)
 	drain:
 		for {
@@ -415,18 +401,16 @@ func TestEventStream(t *testing.T) {
 				}
 				got = append(got, ev)
 			case <-timeout:
-				t.Fatal("stream did not end after the session stopped")
+				timedOut = true
+				break drain
 			}
 		}
-		if len(got) == 0 {
-			t.Fatal("no events after stop")
-		}
+		g.Expect(timedOut).To(BeFalse(), "stream did not end after the session stopped")
+		g.Expect(got).NotTo(BeEmpty(), "no events after stop")
 		last = got[len(got)-1]
 		var p map[string]string
 		_ = json.Unmarshal(last.data.Payload, &p)
-		if p["status"] != session.StatusStopped {
-			t.Errorf("last event before the stream ended: %s", last.data.Payload)
-		}
+		g.Expect(p).To(HaveKeyWithValue("status", session.StatusStopped), "last event before the stream ended: %s", last.data.Payload)
 	}
 }
 
@@ -434,6 +418,7 @@ func TestEventStream(t *testing.T) {
 // in that window is never sent. EventPoll 0 makes the window a large share of each poll cycle.
 func TestEventStreamDeliversTerminalEvent(t *testing.T) {
 	t.Parallel()
+	g := NewWithT(t)
 	e := newEnv(t, 0)
 	for i := range 30 {
 		id := e.create(t, alice)
@@ -449,31 +434,29 @@ func TestEventStreamDeliversTerminalEvent(t *testing.T) {
 		cancel()
 		var p map[string]string
 		_ = json.Unmarshal(last.data.Payload, &p)
-		if p["status"] != session.StatusStopped {
-			t.Fatalf("iteration %d: stream ended without the stopped event; last %s", i, last.data.Payload)
-		}
+		g.Expect(p).To(HaveKeyWithValue("status", session.StatusStopped), "iteration %d: stream ended without the stopped event; last %s", i, last.data.Payload)
 	}
 }
 
 func TestLogin(t *testing.T) {
 	t.Parallel()
+	g := NewWithT(t)
 	e := newEnv(t, 10*time.Millisecond)
 	code, first := e.do(t, http.MethodPost, "/login", "", map[string]string{"name": "  Carol "})
-	if code != http.StatusOK || first["name"] != "carol" || first["created"] != true || !strings.HasPrefix(first["token"].(string), "trm_") {
-		t.Fatalf("first login: %d %v", code, first)
-	}
+	g.Expect(code).To(Equal(http.StatusOK), "first login: %v", first)
+	g.Expect(first).To(And(HaveKeyWithValue("name", "carol"), HaveKeyWithValue("created", true)), "first login")
+	g.Expect(first["token"]).To(HavePrefix("trm_"), "first login")
 	_, again := e.do(t, http.MethodPost, "/login", "", map[string]string{"name": "carol"})
-	if again["token"] != first["token"] || again["created"] != false {
-		t.Errorf("second login: %v", again)
-	}
+	g.Expect(again).To(And(HaveKeyWithValue("token", first["token"]), HaveKeyWithValue("created", false)), "second login")
 	token := first["token"].(string)
-	if code, me := e.do(t, http.MethodGet, "/whoami", token, nil); code != http.StatusOK || me["name"] != "carol" {
-		t.Errorf("whoami with login token: %d %v", code, me)
-	}
+	code, me := e.do(t, http.MethodGet, "/whoami", token, nil)
+	g.Expect(code).To(Equal(http.StatusOK), "whoami with login token: %v", me)
+	g.Expect(me).To(HaveKeyWithValue("name", "carol"), "whoami with login token")
 	for _, name := range []string{"", "-x", "has space", "ünï", strings.Repeat("a", 40)} {
-		if code, _ := e.do(t, http.MethodPost, "/login", "", map[string]string{"name": name}); code != http.StatusBadRequest {
-			t.Errorf("name %q: %d", name, code)
-		}
+		t.Run(fmt.Sprintf("name %q", name), func(t *testing.T) {
+			code, _ := e.do(t, http.MethodPost, "/login", "", map[string]string{"name": name})
+			NewWithT(t).Expect(code).To(Equal(http.StatusBadRequest))
+		})
 	}
 }
 
@@ -487,17 +470,16 @@ func TestLoginOnlyOnAllowedHosts(t *testing.T) {
 		"myhost.tailnet.ts.net": http.StatusForbidden,
 		"192.168.1.10:3000":     http.StatusForbidden,
 	} {
-		req, _ := http.NewRequest(http.MethodPost, e.srv.URL+"/login", strings.NewReader(`{"name":"dave"}`))
-		if host != "" {
-			req.Header.Set("X-Forwarded-Host", host)
-		}
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		resp.Body.Close()
-		if resp.StatusCode != want {
-			t.Errorf("host %q: %d want %d", host, resp.StatusCode, want)
-		}
+		t.Run(fmt.Sprintf("host %q", host), func(t *testing.T) {
+			g := NewWithT(t)
+			req, _ := http.NewRequest(http.MethodPost, e.srv.URL+"/login", strings.NewReader(`{"name":"dave"}`))
+			if host != "" {
+				req.Header.Set("X-Forwarded-Host", host)
+			}
+			resp, err := http.DefaultClient.Do(req)
+			g.Expect(err).NotTo(HaveOccurred())
+			resp.Body.Close()
+			g.Expect(resp.StatusCode).To(Equal(want))
+		})
 	}
 }

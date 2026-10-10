@@ -2,12 +2,14 @@ package api_test
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	. "github.com/onsi/gomega"
 
 	"terrarium/internal/session"
 )
@@ -33,31 +35,30 @@ func TestNameIsRequiredAndNotUnique(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t, 10*time.Millisecond)
 	for _, n := range []string{"", "   ", strings.Repeat("x", 121)} {
-		if code, _ := e.do(t, http.MethodPost, "/sessions", alice, map[string]string{"name": n, "harness": "codex", "prompt": "hi"}); code != http.StatusBadRequest {
-			t.Errorf("name %q: %d", n, code)
-		}
+		t.Run(fmt.Sprintf("name %q", n), func(t *testing.T) {
+			code, _ := e.do(t, http.MethodPost, "/sessions", alice, map[string]string{"name": n, "harness": "codex", "prompt": "hi"})
+			NewWithT(t).Expect(code).To(Equal(http.StatusBadRequest))
+		})
 	}
-	if code, _ := e.do(t, http.MethodPost, "/sessions", alice, map[string]string{"harness": "codex", "prompt": "hi"}); code != http.StatusBadRequest {
-		t.Errorf("missing name: %d", code)
-	}
+	g := NewWithT(t)
+	code, _ := e.do(t, http.MethodPost, "/sessions", alice, map[string]string{"harness": "codex", "prompt": "hi"})
+	g.Expect(code).To(Equal(http.StatusBadRequest), "missing name")
 	a := e.createNamed(t, alice, "  same\tname ", "codex")
 	b := e.createNamed(t, alice, "same name", "codex")
-	if a == b {
-		t.Fatal("ids must differ")
-	}
+	g.Expect(a).NotTo(Equal(b), "ids must differ")
 	_, body := e.do(t, http.MethodGet, "/sessions/"+a.String(), alice, nil)
-	if body["name"] != "same name" {
-		t.Errorf("name not normalised: %q", body["name"])
-	}
-	for _, f := range []string{"display_status", "cost_usd", "cost_complete", "duration_seconds"} {
-		if _, ok := body[f]; !ok {
-			t.Errorf("missing field %s", f)
-		}
-	}
+	g.Expect(body).To(HaveKeyWithValue("name", "same name"), "name not normalised")
+	g.Expect(body).To(And(
+		HaveKey("display_status"),
+		HaveKey("cost_usd"),
+		HaveKey("cost_complete"),
+		HaveKey("duration_seconds"),
+	))
 }
 
 func TestListFilterSortPaginate(t *testing.T) {
 	t.Parallel()
+	g := NewWithT(t)
 	e := newEnv(t, 10*time.Millisecond)
 	mk := func(name, harness string) uuid.UUID {
 		id := e.createNamed(t, alice, name, harness)
@@ -67,48 +68,38 @@ func TestListFilterSortPaginate(t *testing.T) {
 	mk("Fix flaky test", "codex")
 	mk("fix login bug", "claude-code")
 	failed := mk("Refactor store", "claude-code")
-	if _, err := e.st.Pool().Exec(context.Background(), `UPDATE sessions SET status = 'failed', error = 'boom' WHERE id = $1`, failed); err != nil {
-		t.Fatal(err)
-	}
+	_, err := e.st.Pool().Exec(context.Background(), `UPDATE sessions SET status = 'failed', error = 'boom' WHERE id = $1`, failed)
+	g.Expect(err).NotTo(HaveOccurred())
 	e.createNamed(t, bob, "fix bob's thing", "codex")
 
 	code, body := e.do(t, http.MethodGet, "/sessions?q=FIX", alice, nil)
-	if code != http.StatusOK || body["total"].(float64) != 3 {
-		t.Fatalf("search across users: %d %v", code, body)
-	}
+	g.Expect(code).To(Equal(http.StatusOK), "search across users: %v", body)
+	g.Expect(body).To(HaveKeyWithValue("total", float64(3)), "search across users")
 	_, body = e.do(t, http.MethodGet, "/sessions?q=FIX&owner=alice", alice, nil)
-	if body["total"].(float64) != 2 {
-		t.Errorf("search with owner: %v", body["total"])
-	}
+	g.Expect(body).To(HaveKeyWithValue("total", float64(2)), "search with owner")
 	_, body = e.do(t, http.MethodGet, "/sessions?harness=claude-code&sort=name&order=asc", alice, nil)
-	if got := names(body); len(got) != 2 || got[0] != "fix login bug" || got[1] != "Refactor store" {
-		t.Errorf("harness filter + name sort: %v", got)
-	}
+	g.Expect(names(body)).To(Equal([]string{"fix login bug", "Refactor store"}), "harness filter + name sort")
 	_, body = e.do(t, http.MethodGet, "/sessions?status=failed", alice, nil)
-	if got := names(body); len(got) != 1 || got[0] != "Refactor store" {
-		t.Errorf("failed filter: %v", got)
-	}
+	g.Expect(names(body)).To(Equal([]string{"Refactor store"}), "failed filter")
 	_, body = e.do(t, http.MethodGet, "/sessions?status=stopped", alice, nil)
-	if body["total"].(float64) != 2 {
-		t.Errorf("stopped excludes failed: %v", body["total"])
-	}
+	g.Expect(body).To(HaveKeyWithValue("total", float64(2)), "stopped excludes failed")
 	_, body = e.do(t, http.MethodGet, "/sessions?owner=alice&limit=2&offset=2&sort=created_at&order=asc", alice, nil)
-	if got := names(body); len(got) != 1 || got[0] != "Refactor store" || body["total"].(float64) != 3 {
-		t.Errorf("pagination: %v total %v", got, body["total"])
-	}
+	g.Expect(names(body)).To(Equal([]string{"Refactor store"}), "pagination")
+	g.Expect(body).To(HaveKeyWithValue("total", float64(3)), "pagination")
 	for _, q := range []string{"status=done", "harness=gpt", "sort=id", "order=up", "limit=0", "limit=201", "offset=-1"} {
-		if code, _ := e.do(t, http.MethodGet, "/sessions?"+q, alice, nil); code != http.StatusBadRequest {
-			t.Errorf("%s: %d", q, code)
-		}
+		t.Run(q, func(t *testing.T) {
+			code, _ := e.do(t, http.MethodGet, "/sessions?"+q, alice, nil)
+			NewWithT(t).Expect(code).To(Equal(http.StatusBadRequest))
+		})
 	}
 	// SQL metacharacters in the search are literal.
-	if _, body := e.do(t, http.MethodGet, "/sessions?q=%25", alice, nil); body["total"].(float64) != 0 {
-		t.Errorf("percent search matched %v", body["total"])
-	}
+	_, body = e.do(t, http.MethodGet, "/sessions?q=%25", alice, nil)
+	g.Expect(body).To(HaveKeyWithValue("total", float64(0)), "percent search")
 }
 
 func TestStats(t *testing.T) {
 	t.Parallel()
+	g := NewWithT(t)
 	e := newEnv(t, 10*time.Millisecond)
 	running := e.createNamed(t, alice, "a", "codex")
 	e.setStatus(t, running, []string{session.StatusPending}, session.StatusRunning)
@@ -116,36 +107,25 @@ func TestStats(t *testing.T) {
 	e.stop(t, ok)
 	bad := e.createNamed(t, alice, "c", "codex")
 	e.stop(t, bad)
-	if _, err := e.st.Pool().Exec(context.Background(), `UPDATE sessions SET status = 'failed', error = 'boom' WHERE id = $1`, bad); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := e.st.AddUsage(context.Background(), ok, 100, 0.25, true); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := e.st.AddUsage(context.Background(), bad, 100, 0.5, true); err != nil {
-		t.Fatal(err)
-	}
+	_, err := e.st.Pool().Exec(context.Background(), `UPDATE sessions SET status = 'failed', error = 'boom' WHERE id = $1`, bad)
+	g.Expect(err).NotTo(HaveOccurred())
+	_, err = e.st.AddUsage(context.Background(), ok, 100, 0.25, true)
+	g.Expect(err).NotTo(HaveOccurred())
+	_, err = e.st.AddUsage(context.Background(), bad, 100, 0.5, true)
+	g.Expect(err).NotTo(HaveOccurred())
 	_, body := e.do(t, http.MethodGet, "/stats", alice, nil)
-	if body["cost_complete"] != true {
-		t.Errorf("cost_complete: %v", body["cost_complete"])
-	}
+	g.Expect(body).To(HaveKeyWithValue("cost_complete", true))
 	want := map[string]float64{"total": 3, "running": 1, "active": 1, "failed": 1, "failure_rate": 0.5, "total_cost_usd": 0.75}
 	for k, v := range want {
-		if body[k] != v {
-			t.Errorf("%s: got %v want %v", k, body[k], v)
-		}
+		g.Expect(body).To(HaveKeyWithValue(k, v))
 	}
 	// Stats follow the listing filters.
-	if _, body := e.do(t, http.MethodGet, "/stats", bob, nil); body["total"] != float64(3) {
-		t.Errorf("stats for everyone: %v", body)
-	}
-	if _, body := e.do(t, http.MethodGet, "/stats?owner=bob", bob, nil); body["total"] != float64(0) {
-		t.Errorf("stats for bob: %v", body)
-	}
-	if _, body := e.do(t, http.MethodGet, "/stats?status=failed&harness=codex", alice, nil); body["total"] != float64(1) || body["failed"] != float64(1) {
-		t.Errorf("stats with status and harness filters: %v", body)
-	}
-	if code, _ := e.do(t, http.MethodGet, "/stats?status=bogus", alice, nil); code != http.StatusBadRequest {
-		t.Errorf("stats with a bad filter: %d", code)
-	}
+	_, body = e.do(t, http.MethodGet, "/stats", bob, nil)
+	g.Expect(body).To(HaveKeyWithValue("total", float64(3)), "stats for everyone")
+	_, body = e.do(t, http.MethodGet, "/stats?owner=bob", bob, nil)
+	g.Expect(body).To(HaveKeyWithValue("total", float64(0)), "stats for bob")
+	_, body = e.do(t, http.MethodGet, "/stats?status=failed&harness=codex", alice, nil)
+	g.Expect(body).To(And(HaveKeyWithValue("total", float64(1)), HaveKeyWithValue("failed", float64(1))), "stats with status and harness filters")
+	code, _ := e.do(t, http.MethodGet, "/stats?status=bogus", alice, nil)
+	g.Expect(code).To(Equal(http.StatusBadRequest), "stats with a bad filter")
 }

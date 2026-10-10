@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	. "github.com/onsi/gomega"
 
 	"terrarium/internal/credentials"
 	"terrarium/internal/session"
@@ -283,14 +284,14 @@ func (e *env) do(method, path, auth, body string, hdr ...string) resp {
 // assertNoSecrets checks nothing real reached the sandbox.
 func assertNoSecrets(t *testing.T, r resp, extra ...string) {
 	t.Helper()
+	g := NewWithT(t)
 	all := r.body
 	for k, v := range r.header {
 		all += k + strings.Join(v, ",")
 	}
 	for _, s := range append([]string{realClaudeToken, realCodexRefresh, realAccountID}, extra...) {
-		if strings.Contains(all, s) {
-			t.Fatalf("response leaks a real credential")
-		}
+		// Assert on a bool so a failure never prints the secret.
+		g.Expect(strings.Contains(all, s)).To(BeFalse(), "response leaks a real credential")
 	}
 }
 
@@ -301,24 +302,19 @@ func codexBearer(secret string) string  { return "Bearer " + credentials.CodexAc
 // happen just after the client has read the last byte.
 func waitFor(t *testing.T, cond func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(3 * time.Second)
-	for !cond() {
-		if time.Now().After(deadline) {
-			t.Fatal("condition not met")
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
+	NewWithT(t).Eventually(cond, 3*time.Second, 5*time.Millisecond).Should(BeTrue(), "condition not met")
 }
 
 func TestHealthz(t *testing.T) {
+	g := NewWithT(t)
 	e := newEnv(t, newFakeStore(), "")
 	r := e.do("GET", "/healthz", "", "")
-	if r.status != 200 || strings.TrimSpace(r.body) != `{"ok":true}` {
-		t.Fatalf("got %d %q", r.status, r.body)
-	}
+	g.Expect(r.status).To(Equal(200))
+	g.Expect(strings.TrimSpace(r.body)).To(Equal(`{"ok":true}`))
 }
 
 func TestClaudeSwapAndJSONUsage(t *testing.T) {
+	g := NewWithT(t)
 	st := newFakeStore()
 	e := newEnv(t, st, "")
 	secret, id := st.add(session.HarnessClaude, session.StatusRunning, 1000, 0)
@@ -344,9 +340,7 @@ func TestClaudeSwapAndJSONUsage(t *testing.T) {
 	})
 	r := e.do("POST", "/anthropic/v1/messages?beta=true", claudeBearer(secret), `{"model":"m"}`,
 		"anthropic-beta", "oauth-2025-04-20,x", "X-Api-Key", "sk-ant-bogus")
-	if r.status != 200 {
-		t.Fatalf("status %d %s", r.status, r.body)
-	}
+	g.Expect(r.status).To(Equal(200), "body: %s", r.body)
 	assertNoSecrets(t, r)
 	waitFor(t, func() bool { return st.used(id) == 15 })
 
@@ -358,16 +352,13 @@ func TestClaudeSwapAndJSONUsage(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		io.WriteString(w, `{"input_tokens":42}`)
 	})
-	if r := e.do("POST", "/anthropic/v1/messages/count_tokens", claudeBearer(secret), `{}`); r.status != 200 {
-		t.Fatalf("count_tokens status %d", r.status)
-	}
+	g.Expect(e.do("POST", "/anthropic/v1/messages/count_tokens", claudeBearer(secret), `{}`).status).To(Equal(200), "count_tokens status")
 	time.Sleep(50 * time.Millisecond)
-	if got := st.used(id); got != 15 {
-		t.Fatalf("count_tokens changed usage to %d", got)
-	}
+	g.Expect(st.used(id)).To(Equal(int64(15)), "count_tokens changed usage")
 }
 
 func TestClaudeSSEUsage(t *testing.T) {
+	g := NewWithT(t)
 	st := newFakeStore()
 	e := newEnv(t, st, "")
 	secret, id := st.add(session.HarnessClaude, session.StatusIdle, 1000, 0)
@@ -387,13 +378,14 @@ func TestClaudeSSEUsage(t *testing.T) {
 		}
 	})
 	r := e.do("POST", "/anthropic/v1/messages", claudeBearer(secret), `{}`)
-	if r.status != 200 || r.body != stream {
-		t.Fatalf("stream altered: status %d, len %d want %d", r.status, len(r.body), len(stream))
-	}
+	g.Expect(r.status).To(Equal(200))
+	// Compare as a bool: the stream holds a line longer than maxSSELine, too large to print.
+	g.Expect(r.body == stream).To(BeTrue(), "stream altered: len %d want %d", len(r.body), len(stream))
 	waitFor(t, func() bool { return st.used(id) == 35 })
 }
 
 func TestSSEIsNotBuffered(t *testing.T) {
+	g := NewWithT(t)
 	st := newFakeStore()
 	e := newEnv(t, st, "")
 	secret, _ := st.add(session.HarnessClaude, session.StatusRunning, 1000, 0)
@@ -408,23 +400,14 @@ func TestSSEIsNotBuffered(t *testing.T) {
 	req, _ := http.NewRequest("POST", e.inference.URL+"/anthropic/v1/messages", strings.NewReader("{}"))
 	req.Header.Set("Authorization", claudeBearer(secret))
 	r, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
+	g.Expect(err).NotTo(HaveOccurred())
 	defer r.Body.Close()
 	got := make(chan string, 1)
 	go func() {
 		line, _ := bufio.NewReader(r.Body).ReadString('\n')
 		got <- line
 	}()
-	select {
-	case line := <-got:
-		if !strings.Contains(line, "ping") {
-			t.Fatalf("first line %q", line)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("first chunk not streamed before upstream finished")
-	}
+	g.Eventually(got, 2*time.Second).Should(Receive(ContainSubstring("ping")), "first chunk not streamed before upstream finished")
 	close(release)
 }
 
@@ -456,20 +439,18 @@ func TestCodexSwapAndSSEUsage(t *testing.T) {
 			t.Errorf("unexpected upstream %s %s", r.Method, r.URL.Path)
 		}
 	})
+	g := NewWithT(t)
 	r := e.do("GET", "/openai/models?client_version=0.162.1", codexBearer(secret), "", "ChatGPT-Account-ID", credentials.CodexAccountID)
-	if r.status != 200 {
-		t.Fatalf("models %d %s", r.status, r.body)
-	}
+	g.Expect(r.status).To(Equal(200), "models: %s", r.body)
 	assertNoSecrets(t, r, access)
 	r = e.do("POST", "/openai/responses", codexBearer(secret), `{"input":"hi"}`, "ChatGPT-Account-ID", credentials.CodexAccountID)
-	if r.status != 200 {
-		t.Fatalf("responses %d %s", r.status, r.body)
-	}
+	g.Expect(r.status).To(Equal(200), "responses: %s", r.body)
 	assertNoSecrets(t, r, access)
 	waitFor(t, func() bool { return st.used(id) == 1655 })
 }
 
 func TestDenials(t *testing.T) {
+	g := NewWithT(t)
 	st := newFakeStore()
 	e := newEnv(t, st, realAccess("a1", time.Now().Add(240*time.Hour)))
 	e.setAnthropic(func(w http.ResponseWriter, r *http.Request) { t.Errorf("upstream reached: %s", r.URL.Path) })
@@ -502,33 +483,25 @@ func TestDenials(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if r := e.do(c.method, c.path, c.auth, "{}"); r.status != http.StatusForbidden {
-				t.Fatalf("status %d %s", r.status, r.body)
-			}
+			r := e.do(c.method, c.path, c.auth, "{}")
+			NewWithT(t).Expect(r.status).To(Equal(http.StatusForbidden), "body: %s", r.body)
 		})
 	}
-	if n := e.upstreamN.Load(); n != 0 {
-		t.Fatalf("upstream called %d times", n)
-	}
+	g.Expect(e.upstreamN.Load()).To(BeZero(), "upstream calls")
 	reasons := func(id uuid.UUID) map[string]bool {
 		m := map[string]bool{}
 		for _, ev := range st.eventsFor(id) {
-			if ev["decision"] != "denied" || ev["via"] != "inference" {
-				t.Errorf("event %v", ev)
-			}
+			g.Expect(ev).To(And(HaveKeyWithValue("decision", "denied"), HaveKeyWithValue("via", "inference")))
 			m[ev["reason"].(string)] = true
 		}
 		return m
 	}
-	if r := reasons(claudeID); !r["route"] || !r["harness"] {
-		t.Fatalf("claude session events: %v", r)
-	}
-	if r := reasons(stoppedID); !r["status"] {
-		t.Fatalf("stopped session events: %v", r)
-	}
+	g.Expect(reasons(claudeID)).To(And(HaveKey("route"), HaveKey("harness")), "claude session events")
+	g.Expect(reasons(stoppedID)).To(HaveKey("status"), "stopped session events")
 }
 
 func TestBudgetExhausted(t *testing.T) {
+	g := NewWithT(t)
 	st := newFakeStore()
 	e := newEnv(t, st, realAccess("a1", time.Now().Add(240*time.Hour)))
 	claude, claudeID := st.add(session.HarnessClaude, session.StatusRunning, 100, 100)
@@ -538,17 +511,13 @@ func TestBudgetExhausted(t *testing.T) {
 		{"/openai/responses", codexBearer(codex)},
 	} {
 		r := e.do("POST", c.path, c.auth, "{}")
-		if r.status != http.StatusTooManyRequests || strings.TrimSpace(r.body) != `{"error":"session token budget exhausted"}` {
-			t.Fatalf("%s: %d %s", c.path, r.status, r.body)
-		}
+		g.Expect(r.status).To(Equal(http.StatusTooManyRequests), c.path)
+		g.Expect(strings.TrimSpace(r.body)).To(Equal(`{"error":"session token budget exhausted"}`), c.path)
 	}
-	if e.upstreamN.Load() != 0 {
-		t.Fatal("upstream reached")
-	}
+	g.Expect(e.upstreamN.Load()).To(BeZero(), "upstream reached")
 	ev := st.eventsFor(claudeID)
-	if len(ev) != 1 || ev[0]["reason"] != "budget" || ev[0]["decision"] != "denied" {
-		t.Fatalf("events %v", ev)
-	}
+	g.Expect(ev).To(HaveLen(1))
+	g.Expect(ev[0]).To(And(HaveKeyWithValue("reason", "budget"), HaveKeyWithValue("decision", "denied")))
 }
 
 func TestEventWriteFailureDoesNotFailRequest(t *testing.T) {
@@ -556,41 +525,33 @@ func TestEventWriteFailureDoesNotFailRequest(t *testing.T) {
 	st.failApp = true
 	e := newEnv(t, st, "")
 	claude, _ := st.add(session.HarnessClaude, session.StatusRunning, 100, 100)
-	if r := e.do("POST", "/anthropic/v1/messages", claudeBearer(claude), "{}"); r.status != http.StatusTooManyRequests {
-		t.Fatalf("status %d", r.status)
-	}
+	NewWithT(t).Expect(e.do("POST", "/anthropic/v1/messages", claudeBearer(claude), "{}").status).To(Equal(http.StatusTooManyRequests))
 }
 
 func TestMissingCredentialIsPerHarness(t *testing.T) {
+	g := NewWithT(t)
 	st := newFakeStore()
 	e := newEnv(t, st, "") // no codex auth.json
 	codex, _ := st.add(session.HarnessCodex, session.StatusRunning, 1000, 0)
 	claude, _ := st.add(session.HarnessClaude, session.StatusRunning, 1000, 0)
-	if r := e.do("POST", "/openai/responses", codexBearer(codex), "{}"); r.status != http.StatusServiceUnavailable {
-		t.Fatalf("codex status %d", r.status)
-	}
+	g.Expect(e.do("POST", "/openai/responses", codexBearer(codex), "{}").status).To(Equal(http.StatusServiceUnavailable), "codex status")
 	e.setAnthropic(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200) })
-	if r := e.do("POST", "/anthropic/v1/messages", claudeBearer(claude), "{}"); r.status != 200 {
-		t.Fatalf("claude status %d", r.status)
-	}
+	g.Expect(e.do("POST", "/anthropic/v1/messages", claudeBearer(claude), "{}").status).To(Equal(200), "claude status")
 
 	// Credential provisioned later is picked up without restart.
 	writeAuthFile(t, e.authFile, realAccess("a1", time.Now().Add(240*time.Hour)))
 	e.setCodex(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200) })
-	if r := e.do("POST", "/openai/responses", codexBearer(codex), "{}"); r.status != 200 {
-		t.Fatalf("codex after provisioning: %d", r.status)
-	}
+	g.Expect(e.do("POST", "/openai/responses", codexBearer(codex), "{}").status).To(Equal(200), "codex after provisioning")
 
 	// Missing Claude token: 503 for Claude only.
 	e2 := newEnv(t, st, "")
 	os.Remove(e2.gw.ClaudeTokenFile)
 	e2.gw.claude.token = "" // drop the copy loaded at startup
-	if r := e2.do("POST", "/anthropic/v1/messages", claudeBearer(claude), "{}"); r.status != http.StatusServiceUnavailable {
-		t.Fatalf("claude without token: %d", r.status)
-	}
+	g.Expect(e2.do("POST", "/anthropic/v1/messages", claudeBearer(claude), "{}").status).To(Equal(http.StatusServiceUnavailable), "claude without token")
 }
 
 func TestOAuthTokenPlaceholder(t *testing.T) {
+	g := NewWithT(t)
 	st := newFakeStore()
 	e := newEnv(t, st, realAccess("a1", time.Now().Add(240*time.Hour)))
 	codex, _ := st.add(session.HarnessCodex, session.StatusRunning, 1000, 0)
@@ -600,27 +561,17 @@ func TestOAuthTokenPlaceholder(t *testing.T) {
 		"grant_type=refresh_token&refresh_token=terrarium-refresh-" + codex,
 	} {
 		r := e.do("POST", "/oauth/token", "", body)
-		if r.status != 200 {
-			t.Fatalf("status %d %s", r.status, r.body)
-		}
+		g.Expect(r.status).To(Equal(200), "body: %s", r.body)
 		assertNoSecrets(t, r)
 		var got map[string]string
-		if err := json.Unmarshal([]byte(r.body), &got); err != nil {
-			t.Fatal(err)
-		}
-		if got["refresh_token"] != "terrarium-refresh-"+codex || got["access_token"] != credentials.CodexAccessToken(codex) || got["id_token"] == "" {
-			t.Fatalf("unexpected tokens %v", got)
-		}
+		g.Expect(json.Unmarshal([]byte(r.body), &got)).To(Succeed())
+		g.Expect(got).To(HaveKeyWithValue("refresh_token", "terrarium-refresh-"+codex))
+		g.Expect(got).To(HaveKeyWithValue("access_token", credentials.CodexAccessToken(codex)))
+		g.Expect(got["id_token"]).NotTo(BeEmpty())
 	}
-	if e.refreshN.Load() != 0 {
-		t.Fatal("real refresh called")
-	}
-	if r := e.do("POST", "/oauth/token", "", `{"refresh_token":"terrarium-refresh-`+claude+`"}`); r.status != 403 {
-		t.Fatalf("claude session refresh: %d", r.status)
-	}
-	if r := e.do("POST", "/oauth/token", "", `{"refresh_token":"`+realCodexRefresh+`"}`); r.status != 403 {
-		t.Fatalf("foreign refresh: %d", r.status)
-	}
+	g.Expect(e.refreshN.Load()).To(BeZero(), "real refresh called")
+	g.Expect(e.do("POST", "/oauth/token", "", `{"refresh_token":"terrarium-refresh-`+claude+`"}`).status).To(Equal(403), "claude session refresh")
+	g.Expect(e.do("POST", "/oauth/token", "", `{"refresh_token":"`+realCodexRefresh+`"}`).status).To(Equal(403), "foreign refresh")
 }
 
 // refreshHandler issues access tokens named r1, r2, ... and checks the request matches Codex's.
@@ -664,13 +615,10 @@ func jwtName(token string) string {
 // every other field unchanged.
 func checkWriteBack(t *testing.T, path, wantAccess string) {
 	t.Helper()
+	g := NewWithT(t)
 	fi, err := os.Stat(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if fi.Mode().Perm() != 0o600 {
-		t.Fatalf("mode %v", fi.Mode().Perm())
-	}
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(fi.Mode().Perm()).To(Equal(os.FileMode(0o600)), "mode")
 	b, _ := os.ReadFile(path)
 	var doc struct {
 		AuthMode string          `json:"auth_mode"`
@@ -679,28 +627,23 @@ func checkWriteBack(t *testing.T, path, wantAccess string) {
 		LastRefr string          `json:"last_refresh"`
 		Tokens   map[string]any  `json:"tokens"`
 	}
-	if err := json.Unmarshal(b, &doc); err != nil {
-		t.Fatal(err)
-	}
-	if doc.AuthMode != "chatgpt" || string(doc.APIKey) != "null" || doc.Unknown["keep"] != true {
-		t.Fatalf("top-level fields not preserved: %s", b)
-	}
-	if doc.Tokens["unknown_tok"] != "keep-me" || doc.Tokens["account_id"] != realAccountID {
-		t.Fatalf("token fields not preserved: %s", b)
-	}
-	if access, _ := doc.Tokens["access_token"].(string); jwtName(access) != wantAccess || doc.Tokens["refresh_token"] != "rotated-refresh-1" || doc.Tokens["id_token"] != "new-id-1" {
-		t.Fatalf("tokens not rotated: %s", b)
-	}
-	if doc.LastRefr == "2026-01-01T00:00:00Z" {
-		t.Fatal("last_refresh not updated")
-	}
+	g.Expect(json.Unmarshal(b, &doc)).To(Succeed())
+	g.Expect(doc.AuthMode).To(Equal("chatgpt"), "top-level fields not preserved")
+	g.Expect(string(doc.APIKey)).To(Equal("null"), "top-level fields not preserved")
+	g.Expect(doc.Unknown).To(HaveKeyWithValue("keep", true), "top-level fields not preserved")
+	g.Expect(doc.Tokens).To(HaveKeyWithValue("unknown_tok", "keep-me"), "token fields not preserved")
+	g.Expect(doc.Tokens).To(HaveKeyWithValue("account_id", realAccountID), "token fields not preserved")
+	access, _ := doc.Tokens["access_token"].(string)
+	g.Expect(jwtName(access)).To(Equal(wantAccess), "tokens not rotated")
+	g.Expect(doc.Tokens).To(HaveKeyWithValue("refresh_token", "rotated-refresh-1"), "tokens not rotated")
+	g.Expect(doc.Tokens).To(HaveKeyWithValue("id_token", "new-id-1"), "tokens not rotated")
+	g.Expect(doc.LastRefr).NotTo(Equal("2026-01-01T00:00:00Z"), "last_refresh not updated")
 	matches, _ := filepath.Glob(filepath.Join(filepath.Dir(path), ".auth.json.tmp-*"))
-	if len(matches) != 0 {
-		t.Fatalf("temp files left: %v", matches)
-	}
+	g.Expect(matches).To(BeEmpty(), "temp files left")
 }
 
 func TestCodexProactiveRefresh(t *testing.T) {
+	g := NewWithT(t)
 	st := newFakeStore()
 	old := realAccess("old", time.Now().Add(30*time.Minute))
 	e := newEnv(t, st, old)
@@ -711,21 +654,17 @@ func TestCodexProactiveRefresh(t *testing.T) {
 		w.WriteHeader(200)
 	})
 	codex, _ := st.add(session.HarnessCodex, session.StatusRunning, 1000, 0)
-	if r := e.do("POST", "/openai/responses", codexBearer(codex), "{}"); r.status != 200 {
-		t.Fatalf("status %d", r.status)
-	}
-	if e.refreshN.Load() != 1 || seen.Load() != "r1" {
-		t.Fatalf("refreshes %d, upstream saw token %v", e.refreshN.Load(), seen.Load())
-	}
+	g.Expect(e.do("POST", "/openai/responses", codexBearer(codex), "{}").status).To(Equal(200))
+	g.Expect(e.refreshN.Load()).To(Equal(int64(1)), "refreshes")
+	g.Expect(seen.Load()).To(Equal("r1"), "upstream saw token")
 	checkWriteBack(t, e.authFile, "r1")
 	// Fresh token: no further refresh.
 	e.do("POST", "/openai/responses", codexBearer(codex), "{}")
-	if e.refreshN.Load() != 1 {
-		t.Fatalf("refreshes %d", e.refreshN.Load())
-	}
+	g.Expect(e.refreshN.Load()).To(Equal(int64(1)), "refreshes")
 }
 
 func TestCodexRefreshOn401Retries(t *testing.T) {
+	g := NewWithT(t)
 	st := newFakeStore()
 	old := realAccess("old", time.Now().Add(240*time.Hour))
 	e := newEnv(t, st, old)
@@ -746,9 +685,9 @@ func TestCodexRefreshOn401Retries(t *testing.T) {
 	})
 	codex, _ := st.add(session.HarnessCodex, session.StatusRunning, 1000, 0)
 	r := e.do("POST", "/openai/responses", codexBearer(codex), `{"input":"replay me"}`)
-	if r.status != 200 || calls.Load() != 2 || e.refreshN.Load() != 1 {
-		t.Fatalf("status %d, upstream calls %d, refreshes %d", r.status, calls.Load(), e.refreshN.Load())
-	}
+	g.Expect(r.status).To(Equal(200))
+	g.Expect(calls.Load()).To(Equal(int64(2)), "upstream calls")
+	g.Expect(e.refreshN.Load()).To(Equal(int64(1)), "refreshes")
 	checkWriteBack(t, e.authFile, "r1")
 
 	// Refresh failure returns the original 401 and leaks nothing.
@@ -759,9 +698,7 @@ func TestCodexRefreshOn401Retries(t *testing.T) {
 		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 	})
 	r = e.do("POST", "/openai/responses", codexBearer(codex), `{"input":"replay me"}`)
-	if r.status != 401 {
-		t.Fatalf("status %d", r.status)
-	}
+	g.Expect(r.status).To(Equal(401))
 	assertNoSecrets(t, r, "invalid_grant", "rotated-refresh")
 }
 
@@ -801,14 +738,11 @@ func TestCodexRefreshSingleFlight(t *testing.T) {
 	close(start)
 	wg.Wait()
 	close(statuses)
+	g := NewWithT(t)
 	for s := range statuses {
-		if s != 200 {
-			t.Fatalf("status %d", s)
-		}
+		g.Expect(s).To(Equal(200))
 	}
-	if got := e.refreshN.Load(); got != 1 {
-		t.Fatalf("refreshes %d, want 1", got)
-	}
+	g.Expect(e.refreshN.Load()).To(Equal(int64(1)), "refreshes")
 }
 
 func TestCodexProactiveRefreshSingleFlight(t *testing.T) {
@@ -830,9 +764,7 @@ func TestCodexProactiveRefreshSingleFlight(t *testing.T) {
 		}()
 	}
 	wg.Wait()
-	if got := e.refreshN.Load(); got != 1 {
-		t.Fatalf("refreshes %d, want 1", got)
-	}
+	NewWithT(t).Expect(e.refreshN.Load()).To(Equal(int64(1)), "refreshes")
 }
 
 // connect sends a raw CONNECT with early bytes after the headers.
@@ -868,15 +800,15 @@ func basic(secret string) string {
 }
 
 func TestConnectProxy(t *testing.T) {
+	g := NewWithT(t)
 	st := newFakeStore()
 	e := newEnv(t, st, "")
 	secret, id := st.add(session.HarnessClaude, session.StatusProvisioning, 1000, 0, "example.test")
 	stopped, stoppedID := st.add(session.HarnessClaude, session.StatusStopped, 1000, 0, "example.test")
 
 	resp, _, _ := connect(t, e.proxy.URL, "CONNECT", "example.test:443", "", "")
-	if resp.StatusCode != http.StatusProxyAuthRequired || !strings.HasPrefix(resp.Header.Get("Proxy-Authenticate"), "Basic") {
-		t.Fatalf("missing auth: %d %v", resp.StatusCode, resp.Header)
-	}
+	g.Expect(resp.StatusCode).To(Equal(http.StatusProxyAuthRequired), "missing auth")
+	g.Expect(resp.Header.Get("Proxy-Authenticate")).To(HavePrefix("Basic"), "missing auth")
 	for _, c := range []struct {
 		name, target, auth string
 		status             int
@@ -891,32 +823,24 @@ func TestConnectProxy(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			resp, _, _ := connect(t, e.proxy.URL, "CONNECT", c.target, c.auth, "")
-			if resp.StatusCode != c.status {
-				t.Fatalf("status %d", resp.StatusCode)
-			}
+			NewWithT(t).Expect(resp.StatusCode).To(Equal(c.status))
 		})
 	}
 	resp, _, _ = connect(t, e.proxy.URL, "GET", "http://plain.test/", basic(secret), "")
-	if resp.StatusCode != 403 {
-		t.Fatalf("plain GET: %d", resp.StatusCode)
-	}
+	g.Expect(resp.StatusCode).To(Equal(403), "plain GET")
 
 	resp, c, br := connect(t, e.proxy.URL, "CONNECT", "example.test:443", basic(secret), "early-bytes|")
-	if resp.StatusCode != 200 {
-		t.Fatalf("allowed: %d", resp.StatusCode)
-	}
+	g.Expect(resp.StatusCode).To(Equal(200), "allowed")
 	io.WriteString(c, "more")
 	buf := make([]byte, len("early-bytes|more"))
 	c.SetReadDeadline(time.Now().Add(2 * time.Second))
-	if _, err := io.ReadFull(br, buf); err != nil || string(buf) != "early-bytes|more" {
-		t.Fatalf("tunnel echoed %q, %v", buf, err)
-	}
+	_, err := io.ReadFull(br, buf)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(string(buf)).To(Equal("early-bytes|more"), "tunnel echoed")
 
 	got := map[string]string{}
 	for _, ev := range st.eventsFor(id) {
-		if ev["via"] != "connect" {
-			t.Errorf("event %v", ev)
-		}
+		g.Expect(ev).To(HaveKeyWithValue("via", "connect"))
 		got[ev["host"].(string)] = fmt.Sprint(ev["decision"], "/", ev["reason"])
 	}
 	want := map[string]string{
@@ -928,34 +852,28 @@ func TestConnectProxy(t *testing.T) {
 		"example.test:443":          "allowed/<nil>",
 	}
 	for k, v := range want {
-		if got[k] != v {
-			t.Errorf("event for %s = %q, want %q (all: %v)", k, got[k], v, got)
-		}
+		g.Expect(got).To(HaveKeyWithValue(k, v), "event for %s", k)
 	}
-	if ev := st.eventsFor(stoppedID); len(ev) != 1 || ev[0]["reason"] != "status" {
-		t.Fatalf("stopped events %v", ev)
-	}
+	ev := st.eventsFor(stoppedID)
+	g.Expect(ev).To(HaveLen(1), "stopped events")
+	g.Expect(ev[0]).To(HaveKeyWithValue("reason", "status"), "stopped events")
 }
 
 func TestUsageTeeMalformed(t *testing.T) {
+	g := NewWithT(t)
 	for _, body := range []string{"", "{", "null", `{"usage":"x"}`, `{"usage":{"input_tokens":"a"}}`, "\x00\xff"} {
 		var reported int64
 		tee := newUsageTee(io.NopCloser(strings.NewReader(body)), usageClaude, "application/json", func(u pricing.Usage) { reported = u.Input + u.CacheWrite + u.Output })
 		b, err := io.ReadAll(tee)
-		if err != nil || string(b) != body {
-			t.Fatalf("body altered: %q %v", b, err)
-		}
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(string(b)).To(Equal(body), "body altered")
 		tee.Close()
-		if reported != 0 {
-			t.Fatalf("reported %d for %q", reported, body)
-		}
+		g.Expect(reported).To(BeZero(), "reported for %q", body)
 	}
 	var calls int
 	tee := newUsageTee(io.NopCloser(strings.NewReader(`{"usage":{"input_tokens":2,"output_tokens":3}}`)), usageClaude, "application/json", func(pricing.Usage) { calls++ })
 	io.ReadAll(tee)
 	tee.Close()
 	tee.Close()
-	if calls != 1 {
-		t.Fatalf("reported %d times", calls)
-	}
+	g.Expect(calls).To(Equal(1), "reported times")
 }

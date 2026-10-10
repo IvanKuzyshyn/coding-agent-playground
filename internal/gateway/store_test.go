@@ -6,11 +6,11 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	. "github.com/onsi/gomega"
 
 	"terrarium/internal/credentials"
 	"terrarium/internal/session"
@@ -76,6 +76,7 @@ func TestStoreBacked(t *testing.T) {
 	e := newEnv(t, st, realAccess("a1", time.Now().Add(240*time.Hour)))
 
 	t.Run("claude usage accumulates then budget denies", func(t *testing.T) {
+		g := NewWithT(t)
 		secret, id := insertSession(t, st, session.HarnessClaude, session.StatusRunning, 50, 0)
 		e.setAnthropic(func(w http.ResponseWriter, r *http.Request) {
 			if r.Header.Get("Authorization") != "Bearer "+realClaudeToken {
@@ -86,25 +87,26 @@ func TestStoreBacked(t *testing.T) {
 			io.WriteString(w, `data: {"type":"message_delta","usage":{"output_tokens":30}}`+"\n\n")
 		})
 		r := e.do("POST", "/anthropic/v1/messages", claudeBearer(secret), "{}")
-		if r.status != 200 {
-			t.Fatalf("status %d", r.status)
-		}
+		g.Expect(r.status).To(Equal(200))
 		assertNoSecrets(t, r)
 		waitFor(t, func() bool {
-			g, err := st.GatewaySessionBySecretHash(context.Background(), credentials.Hash(secret))
-			return err == nil && g.TokensUsed == 55
+			gs, err := st.GatewaySessionBySecretHash(context.Background(), credentials.Hash(secret))
+			return err == nil && gs.TokensUsed == 55
 		})
 		r = e.do("POST", "/anthropic/v1/messages", claudeBearer(secret), "{}")
-		if r.status != http.StatusTooManyRequests || !strings.Contains(r.body, "session token budget exhausted") {
-			t.Fatalf("status %d %s", r.status, r.body)
-		}
+		g.Expect(r.status).To(Equal(http.StatusTooManyRequests))
+		g.Expect(r.body).To(ContainSubstring("session token budget exhausted"))
 		evs := egressEvents(t, st, id)
-		if len(evs) != 1 || evs[0]["decision"] != "denied" || evs[0]["reason"] != "budget" || evs[0]["via"] != "inference" {
-			t.Fatalf("events %v", evs)
-		}
+		g.Expect(evs).To(HaveLen(1))
+		g.Expect(evs[0]).To(And(
+			HaveKeyWithValue("decision", "denied"),
+			HaveKeyWithValue("reason", "budget"),
+			HaveKeyWithValue("via", "inference"),
+		))
 	})
 
 	t.Run("codex usage", func(t *testing.T) {
+		g := NewWithT(t)
 		secret, _ := insertSession(t, st, session.HarnessCodex, session.StatusIdle, 1000, 0)
 		e.setCodex(func(w http.ResponseWriter, r *http.Request) {
 			if r.Header.Get("ChatGPT-Account-ID") != realAccountID {
@@ -113,54 +115,50 @@ func TestStoreBacked(t *testing.T) {
 			w.Header().Set("Content-Type", "text/event-stream")
 			io.WriteString(w, `data: {"type":"response.completed","response":{"usage":{"input_tokens":100,"input_tokens_details":{"cached_tokens":60},"output_tokens":7}}}`+"\n\n")
 		})
-		if r := e.do("POST", "/openai/responses", codexBearer(secret), "{}"); r.status != 200 {
-			t.Fatalf("status %d", r.status)
-		}
+		g.Expect(e.do("POST", "/openai/responses", codexBearer(secret), "{}").status).To(Equal(200))
 		waitFor(t, func() bool {
-			g, err := st.GatewaySessionBySecretHash(context.Background(), credentials.Hash(secret))
-			return err == nil && g.TokensUsed == 47
+			gs, err := st.GatewaySessionBySecretHash(context.Background(), credentials.Hash(secret))
+			return err == nil && gs.TokensUsed == 47
 		})
 	})
 
 	t.Run("non-live and harness mismatch", func(t *testing.T) {
+		g := NewWithT(t)
 		stopped, stoppedID := insertSession(t, st, session.HarnessClaude, session.StatusStopped, 1000, 0)
 		codex, codexID := insertSession(t, st, session.HarnessCodex, session.StatusRunning, 1000, 0)
-		if r := e.do("POST", "/anthropic/v1/messages", claudeBearer(stopped), "{}"); r.status != 403 {
-			t.Fatalf("stopped: %d", r.status)
-		}
-		if r := e.do("POST", "/anthropic/v1/messages", codexBearer(codex), "{}"); r.status != 403 {
-			t.Fatalf("mismatch: %d", r.status)
-		}
-		if r := e.do("POST", "/anthropic/v1/messages", claudeBearer(credentials.NewSecret()), "{}"); r.status != 403 {
-			t.Fatalf("unknown: %d", r.status)
-		}
-		if evs := egressEvents(t, st, stoppedID); len(evs) != 1 || evs[0]["reason"] != "status" {
-			t.Fatalf("stopped events %v", evs)
-		}
-		if evs := egressEvents(t, st, codexID); len(evs) != 1 || evs[0]["reason"] != "harness" {
-			t.Fatalf("codex events %v", evs)
-		}
+		g.Expect(e.do("POST", "/anthropic/v1/messages", claudeBearer(stopped), "{}").status).To(Equal(403), "stopped")
+		g.Expect(e.do("POST", "/anthropic/v1/messages", codexBearer(codex), "{}").status).To(Equal(403), "mismatch")
+		g.Expect(e.do("POST", "/anthropic/v1/messages", claudeBearer(credentials.NewSecret()), "{}").status).To(Equal(403), "unknown")
+		evs := egressEvents(t, st, stoppedID)
+		g.Expect(evs).To(HaveLen(1), "stopped events")
+		g.Expect(evs[0]).To(HaveKeyWithValue("reason", "status"), "stopped events")
+		evs = egressEvents(t, st, codexID)
+		g.Expect(evs).To(HaveLen(1), "codex events")
+		g.Expect(evs[0]).To(HaveKeyWithValue("reason", "harness"), "codex events")
 	})
 
 	t.Run("connect events", func(t *testing.T) {
+		g := NewWithT(t)
 		secret, id := insertSession(t, st, session.HarnessClaude, session.StatusProvisioning, 1000, 0, "example.test")
-		if resp, _, _ := connect(t, e.proxy.URL, "CONNECT", "github.com:443", basic(secret), ""); resp.StatusCode != 403 {
-			t.Fatalf("denied host: %d", resp.StatusCode)
-		}
+		resp, _, _ := connect(t, e.proxy.URL, "CONNECT", "github.com:443", basic(secret), "")
+		g.Expect(resp.StatusCode).To(Equal(403), "denied host")
 		resp, c, br := connect(t, e.proxy.URL, "CONNECT", "example.test:443", basic(secret), "ping")
-		if resp.StatusCode != 200 {
-			t.Fatalf("allowed host: %d", resp.StatusCode)
-		}
+		g.Expect(resp.StatusCode).To(Equal(200), "allowed host")
 		buf := make([]byte, 4)
 		c.SetReadDeadline(time.Now().Add(2 * time.Second))
-		if _, err := io.ReadFull(br, buf); err != nil || string(buf) != "ping" {
-			t.Fatalf("echo %q %v", buf, err)
-		}
+		_, err := io.ReadFull(br, buf)
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(string(buf)).To(Equal("ping"))
 		evs := egressEvents(t, st, id)
-		if len(evs) != 2 ||
-			evs[0]["decision"] != "denied" || evs[0]["host"] != "github.com:443" || evs[0]["via"] != "connect" ||
-			evs[1]["decision"] != "allowed" || evs[1]["host"] != "example.test:443" {
-			t.Fatalf("events %v", evs)
-		}
+		g.Expect(evs).To(HaveLen(2))
+		g.Expect(evs[0]).To(And(
+			HaveKeyWithValue("decision", "denied"),
+			HaveKeyWithValue("host", "github.com:443"),
+			HaveKeyWithValue("via", "connect"),
+		))
+		g.Expect(evs[1]).To(And(
+			HaveKeyWithValue("decision", "allowed"),
+			HaveKeyWithValue("host", "example.test:443"),
+		))
 	})
 }

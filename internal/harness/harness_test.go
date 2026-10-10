@@ -1,9 +1,10 @@
 package harness
 
 import (
-	"slices"
 	"strings"
 	"testing"
+
+	. "github.com/onsi/gomega"
 
 	"terrarium/internal/session"
 )
@@ -21,100 +22,101 @@ var (
 )
 
 func TestParseClaude(t *testing.T) {
+	g := NewWithT(t)
 	u, _, ok := ParseLine(session.HarnessClaude, []byte(claudeInit))
-	if !ok || u.HarnessSession != "be35dd33-1b7b-415f-865d-7ad0fe2e22ab" {
-		t.Fatalf("init: %+v", u)
-	}
-	if u, _, _ = ParseLine(session.HarnessClaude, []byte(claudeMessage)); u.Message != "ok" {
-		t.Fatalf("message: %+v", u)
-	}
+	g.Expect(ok).To(BeTrue(), "init")
+	g.Expect(u.HarnessSession).To(Equal("be35dd33-1b7b-415f-865d-7ad0fe2e22ab"), "init")
+	u, _, _ = ParseLine(session.HarnessClaude, []byte(claudeMessage))
+	g.Expect(u.Message).To(Equal("ok"), "message")
 	u, _, _ = ParseLine(session.HarnessClaude, []byte(claudeResult))
-	if !u.Final || u.Failed || u.Message != "ok" || u.Usage.InputTokens != 14 || u.Usage.OutputTokens != 272 || u.Usage.AgentSteps != 3 {
-		t.Fatalf("result: %+v %+v", u, u.Usage)
-	}
-	if u, _, _ = ParseLine(session.HarnessClaude, []byte(claudeMaxTurn)); !u.Final || !u.Failed || !strings.HasPrefix(u.Error, "error_max_turns") {
-		t.Fatalf("max turns: %+v", u)
-	}
-	if _, _, ok := ParseLine(session.HarnessClaude, []byte("not json")); ok {
-		t.Fatal("non-JSON accepted")
-	}
+	g.Expect(u.Final).To(BeTrue(), "result")
+	g.Expect(u.Failed).To(BeFalse(), "result")
+	g.Expect(u.Message).To(Equal("ok"), "result")
+	g.Expect(u.Usage.InputTokens).To(Equal(int64(14)), "result")
+	g.Expect(u.Usage.OutputTokens).To(Equal(int64(272)), "result")
+	g.Expect(u.Usage.AgentSteps).To(Equal(3), "result")
+	u, _, _ = ParseLine(session.HarnessClaude, []byte(claudeMaxTurn))
+	g.Expect(u.Final).To(BeTrue(), "max turns")
+	g.Expect(u.Failed).To(BeTrue(), "max turns")
+	g.Expect(u.Error).To(HavePrefix("error_max_turns"), "max turns")
+	_, _, ok = ParseLine(session.HarnessClaude, []byte("not json"))
+	g.Expect(ok).To(BeFalse(), "non-JSON accepted")
 }
 
 func TestParseCodex(t *testing.T) {
-	if u, _, _ := ParseLine(session.HarnessCodex, []byte(codexThread)); u.HarnessSession != "01a12548-5ca3-7e01-b3c4-f15ef9754926" {
-		t.Fatalf("thread: %+v", u)
-	}
-	if u, _, _ := ParseLine(session.HarnessCodex, []byte(codexMessage)); u.Message != "41" {
-		t.Fatalf("message: %+v", u)
-	}
-	u, _, _ := ParseLine(session.HarnessCodex, []byte(codexDone))
-	if !u.Final || u.Failed || u.Usage.ThreadInputTokens != 12926 || u.Usage.ThreadCachedInputTokens != 9600 {
-		t.Fatalf("done: %+v %+v", u, u.Usage)
-	}
+	g := NewWithT(t)
+	u, _, _ := ParseLine(session.HarnessCodex, []byte(codexThread))
+	g.Expect(u.HarnessSession).To(Equal("01a12548-5ca3-7e01-b3c4-f15ef9754926"), "thread")
+	u, _, _ = ParseLine(session.HarnessCodex, []byte(codexMessage))
+	g.Expect(u.Message).To(Equal("41"), "message")
+	u, _, _ = ParseLine(session.HarnessCodex, []byte(codexDone))
+	g.Expect(u.Final).To(BeTrue(), "done")
+	g.Expect(u.Failed).To(BeFalse(), "done")
+	g.Expect(u.Usage.ThreadInputTokens).To(Equal(int64(12926)), "done")
+	g.Expect(u.Usage.ThreadCachedInputTokens).To(Equal(int64(9600)), "done")
 	// Spike S2 totals: turn 1 = 11250 input (9600 cached), 5 output; turn 2 thread totals above.
 	prev := Usage{ThreadInputTokens: 1650, ThreadOutputTokens: 5, ThreadCachedInputTokens: 9600}
-	if got := u.Usage.PerTurn(&prev); got.InputTokens != 11276 || got.OutputTokens != 5 || got.CachedInputTokens != 0 {
-		t.Fatalf("per turn: %+v", got)
-	}
-	if got := u.Usage.PerTurn(nil); got.InputTokens != 12926 {
-		t.Fatalf("first turn: %+v", got)
-	}
-	if u, _, _ := ParseLine(session.HarnessCodex, []byte(codexFailed)); !u.Final || !u.Failed || u.Error != "Fatal error: boom" {
-		t.Fatalf("failed: %+v", u)
-	}
+	got := u.Usage.PerTurn(&prev)
+	g.Expect(got.InputTokens).To(Equal(int64(11276)), "per turn")
+	g.Expect(got.OutputTokens).To(Equal(int64(5)), "per turn")
+	g.Expect(got.CachedInputTokens).To(Equal(int64(0)), "per turn")
+	g.Expect(u.Usage.PerTurn(nil).InputTokens).To(Equal(int64(12926)), "first turn")
+	u, _, _ = ParseLine(session.HarnessCodex, []byte(codexFailed))
+	g.Expect(u.Final).To(BeTrue(), "failed")
+	g.Expect(u.Failed).To(BeTrue(), "failed")
+	g.Expect(u.Error).To(Equal("Fatal error: boom"), "failed")
 }
 
 func TestTurnArgv(t *testing.T) {
+	g := NewWithT(t)
 	spec := session.Spec{Harness: session.HarnessClaude, Limits: session.Limits{MaxAgentSteps: 5}}
 	argv := TurnArgv(spec, "-rf /", "sid")
-	if !slices.Contains(argv, "--resume") || argv[len(argv)-2] != "--" || argv[len(argv)-1] != "-rf /" || !slices.Contains(argv, "5") {
-		t.Errorf("claude argv: %v", argv)
-	}
+	g.Expect(argv).To(ContainElements("--resume", "5"), "claude argv")
+	g.Expect(argv[len(argv)-2:]).To(Equal([]string{"--", "-rf /"}), "claude argv")
 	spec.Harness = session.HarnessCodex
 	argv = TurnArgv(spec, "-rf /", "tid")
 	want := []string{"codex", "exec", "resume", "tid", "--json", "--dangerously-bypass-approvals-and-sandbox", "--skip-git-repo-check", "--", "-rf /"}
-	if !slices.Equal(argv, want) {
-		t.Errorf("codex argv:\n got %v\nwant %v", argv, want)
-	}
+	g.Expect(argv).To(Equal(want), "codex argv")
 }
 
 func TestContainerEnvHasNoRealSecrets(t *testing.T) {
+	g := NewWithT(t)
 	env := ContainerEnv("sid", session.Spec{Harness: session.HarnessClaude}, Gateway{URL: "http://gateway:8080", ProxyHost: "gateway:3128"}, strings.Repeat("a", 64))
-	if !strings.HasPrefix(env["CLAUDE_CODE_OAUTH_TOKEN"], "sk-ant-oat01-terrarium-") || env["NO_PROXY"] != "gateway" {
-		t.Errorf("env: %v", env)
-	}
-	if _, ok := env["ANTHROPIC_API_KEY"]; ok {
-		t.Error("ANTHROPIC_API_KEY must not be set; it takes precedence over the OAuth token")
-	}
+	g.Expect(env["CLAUDE_CODE_OAUTH_TOKEN"]).To(HavePrefix("sk-ant-oat01-terrarium-"))
+	g.Expect(env).To(HaveKeyWithValue("NO_PROXY", "gateway"))
+	g.Expect(env).NotTo(HaveKey("ANTHROPIC_API_KEY"), "ANTHROPIC_API_KEY must not be set; it takes precedence over the OAuth token")
 }
 
 func TestContainerEnvRoutesGitHubThroughGateway(t *testing.T) {
+	g := NewWithT(t)
 	secret := strings.Repeat("a", 64)
 	gw := Gateway{URL: "http://gateway:8080", ProxyHost: "gateway:3128", GitName: "Ada", GitEmail: "ada@example.com"}
 	env := ContainerEnv("sid", session.Spec{Harness: session.HarnessCodex, Repo: "octo/hello"}, gw, secret)
 	github := "http://terrarium:" + secret + "@gateway:8080/github"
-	if env["GIT_CONFIG_KEY_0"] != "url."+github+"/.insteadOf" || env["GIT_CONFIG_VALUE_0"] != "https://github.com/" {
-		t.Errorf("git rewrite: %q -> %q", env["GIT_CONFIG_KEY_0"], env["GIT_CONFIG_VALUE_0"])
-	}
-	if env["TERRARIUM_GITHUB_URL"] != github || env["TERRARIUM_REPO"] != "octo/hello" || env["TERRARIUM_BRANCH_PREFIX"] != "terrarium/sid/" {
-		t.Errorf("env: %v", env)
-	}
-	if env["GIT_AUTHOR_EMAIL"] != "ada@example.com" || env["GIT_COMMITTER_NAME"] != "Ada" {
-		t.Errorf("identity: %v", env)
-	}
+	g.Expect(env).To(HaveKeyWithValue("GIT_CONFIG_KEY_0", "url."+github+"/.insteadOf"), "git rewrite")
+	g.Expect(env).To(HaveKeyWithValue("GIT_CONFIG_VALUE_0", "https://github.com/"), "git rewrite")
+	g.Expect(env).To(HaveKeyWithValue("TERRARIUM_GITHUB_URL", github))
+	g.Expect(env).To(HaveKeyWithValue("TERRARIUM_REPO", "octo/hello"))
+	g.Expect(env).To(HaveKeyWithValue("TERRARIUM_BRANCH_PREFIX", "terrarium/sid/"))
+	g.Expect(env).To(HaveKeyWithValue("GIT_AUTHOR_EMAIL", "ada@example.com"), "identity")
+	g.Expect(env).To(HaveKeyWithValue("GIT_COMMITTER_NAME", "Ada"), "identity")
 }
 
 func TestSetupFilesPublishGuide(t *testing.T) {
 	gw := Gateway{URL: "http://gateway:8080"}
 	for harness, path := range map[string]string{session.HarnessClaude: Home + "/.claude/CLAUDE.md", session.HarnessCodex: Home + "/.codex/AGENTS.md"} {
-		files := SetupFiles("sid", session.Spec{Harness: harness, Repo: "octo/hello"}, gw, strings.Repeat("a", 64), "")
-		if len(files) == 0 || files[0].Path != path || !strings.Contains(string(files[0].Data), "terrarium/sid/") {
-			t.Errorf("%s: %+v", harness, files)
-		}
-		files = SetupFiles("sid", session.Spec{Harness: harness}, gw, strings.Repeat("a", 64), "")
-		if guide := string(files[0].Data); files[0].Path != path || !strings.Contains(guide, OutcomeMarker) || strings.Contains(guide, "/pulls") {
-			t.Errorf("%s without a repo: %s", harness, guide)
-		}
+		t.Run(harness, func(t *testing.T) {
+			g := NewWithT(t)
+			files := SetupFiles("sid", session.Spec{Harness: harness, Repo: "octo/hello"}, gw, strings.Repeat("a", 64), "")
+			g.Expect(files).NotTo(BeEmpty())
+			g.Expect(files[0].Path).To(Equal(path))
+			g.Expect(string(files[0].Data)).To(ContainSubstring("terrarium/sid/"))
+			files = SetupFiles("sid", session.Spec{Harness: harness}, gw, strings.Repeat("a", 64), "")
+			guide := string(files[0].Data)
+			g.Expect(files[0].Path).To(Equal(path), "without a repo")
+			g.Expect(guide).To(ContainSubstring(OutcomeMarker), "without a repo")
+			g.Expect(guide).NotTo(ContainSubstring("/pulls"), "without a repo")
+		})
 	}
 }
 
@@ -131,9 +133,12 @@ func TestReportedFailure(t *testing.T) {
 		{"Use TERRARIUM_OUTCOME: failed when stuck.\nAll good.", "", "Use TERRARIUM_OUTCOME: failed when stuck.\nAll good.", false},
 	}
 	for _, c := range cases {
-		reason, rest, failed := ReportedFailure(c.reply)
-		if reason != c.reason || rest != c.rest || failed != c.failed {
-			t.Errorf("%q: got (%q, %q, %v)", c.reply, reason, rest, failed)
-		}
+		t.Run(c.reply, func(t *testing.T) {
+			g := NewWithT(t)
+			reason, rest, failed := ReportedFailure(c.reply)
+			g.Expect(reason).To(Equal(c.reason))
+			g.Expect(rest).To(Equal(c.rest))
+			g.Expect(failed).To(Equal(c.failed))
+		})
 	}
 }
