@@ -288,14 +288,18 @@ host keychain or password manager at `make up`.
   - `ANTHROPIC_BASE_URL=http://gateway:8080/anthropic`
   - `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`
   - `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN` unset (they take precedence over the OAuth token).
-- Gateway `/anthropic/*`: look up the session by placeholder, replace `Authorization`, forward the
-  `anthropic-beta` header unchanged (subscription auth needs it), stream the response, add usage
-  from the response to `tokens_used`.
-- Calls that bypass `ANTHROPIC_BASE_URL` (WebFetch preflight, fast-mode checks) go to
-  `api.anthropic.com` through the CONNECT proxy and are denied unless allowlisted. Disable WebFetch
-  with a managed-settings deny rule.
-- Open (spike S1): does Claude Code accept a placeholder token at startup, and does it call other
-  endpoints with it?
+- Gateway: forward only `POST /v1/messages` and `POST /v1/messages/count_tokens` (exact match, no
+  encoded paths). The real token may carry more than inference scope, so no other
+  `api.anthropic.com` path gets it. Look up the session by placeholder, replace `Authorization`,
+  forward the `anthropic-beta` header unchanged (it carries `oauth-2025-04-20`), stream the
+  response, add usage to `tokens_used`.
+- Calls that bypass `ANTHROPIC_BASE_URL` with default settings: telemetry
+  (`/api/event_logging/v2/batch`), bootstrap, MCP registry. All go away with
+  `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`; the CONNECT proxy denies them otherwise. Disable
+  WebFetch with a managed-settings deny rule.
+- **Spike S1 result (2026-10-10): works.** Placeholder accepted at startup, two-turn resume on the
+  Max token, real token absent from sandbox env, filesystem and logs. See
+  `spikes/s1-claude-swap/README.md`.
 
 ### 5.3 Codex (ChatGPT Plus)
 
@@ -304,12 +308,18 @@ host keychain or password manager at `make up`.
   refresh-token-rotation conflict between parallel sessions.
 - Sandbox `auth.json`: unsigned placeholder JWTs with the claims Codex parses locally (plan type,
   account id, far-future `exp`) plus a session claim. `cli_auth_credentials_store = "file"`.
-- Sandbox `config.toml`: `openai_base_url = "http://gateway:8080/openai"`;
-  `CODEX_REFRESH_TOKEN_URL_OVERRIDE` and `CODEX_REVOKE_TOKEN_URL_OVERRIDE` point at the gateway,
-  which answers with fresh placeholders.
-- Gateway `/openai/*` → `https://chatgpt.com/backend-api/codex/*`: swap the bearer, forward
-  `ChatGPT-Account-ID`, support WebSocket upgrade, single-flight refresh with write-back.
-- Open (spike S2): does Codex run end to end on placeholder JWTs, HTTP and WebSocket?
+- Sandbox `config.toml`: a custom provider (`requires_openai_auth = true`,
+  `wire_api = "responses"`, `base_url = "http://gateway:8080/openai"`) instead of the built-in
+  `openai` provider, which always tries WebSocket and adds a `/wham/accounts/check` preflight.
+  `chatgpt_base_url` → gateway; analytics and OTel metrics off. `CODEX_REFRESH_TOKEN_URL_OVERRIDE`
+  and `CODEX_REVOKE_TOKEN_URL_OVERRIDE` point at the gateway, which answers with placeholders.
+- Gateway: forward only `POST /openai/responses` and `GET /openai/models` →
+  `https://chatgpt.com/backend-api/codex/*`, swapping the bearer and `ChatGPT-Account-ID`.
+  Deny all `chatgpt_base_url` routes (plugins, settings, accounts check, MCP); Codex works without
+  them. Single-flight refresh against `auth.openai.com` with write-back; access tokens last ~10
+  days.
+- **Spike S2 result (2026-10-10): works.** Forged JWTs accepted, two-turn resume on the Plus login,
+  real token absent from sandbox env, filesystem and logs. See `spikes/s2-codex-swap/README.md`.
 
 ### 5.4 Terms risk (documented, not hidden)
 
@@ -434,6 +444,7 @@ budget, deny); integration tests with `testcontainers-go` for the Docker provide
 
 1. **IaC for the real setup:** deferred (D8). The requirements ask for IaC and best practices, so
    it has to come back before the interviews.
-2. **Spike outcomes** may force the §5.4 fallback for one or both harnesses.
+2. **Spike outcomes:** both swaps work (S1, S2); the §5.4 fallback is only needed if the terms
+   risk is judged unacceptable.
 3. **Repo access for private repos and PR output** (GitHub App with per-repo token through the
    gateway) is design-only until the core slice works.

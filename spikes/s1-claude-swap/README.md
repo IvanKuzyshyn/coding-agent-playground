@@ -49,7 +49,20 @@ Store the token from `claude setup-token` in the keychain, then run `./run-real.
 two-turn resume through the gateway, real token absent from sandbox env, filesystem and gateway
 logs, a non-placeholder bearer refused, and egress decisions during the run.
 
-Results: _pending_.
+Results (2026-10-10, Max subscription, `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`):
+
+| Check | Result |
+|---|---|
+| Turn 1 | `success`, result `ok` |
+| Turn 2 via `--resume <session_id>` | `success`, result `41` (context kept) |
+| Real token in sandbox env / filesystem (`docker export`) | 0 / 0 |
+| Real token in gateway logs | 0 |
+| Non-placeholder bearer | `403` |
+| Requests during the run | only `POST /v1/messages` (upstream `200`); no CONNECT attempts, no denied routes |
+
+**Conclusion:** the placeholder swap works for Claude Code on a Max subscription. The real token
+never enters the sandbox. The open issue is policy, not mechanics: Anthropic's terms on
+intermediating subscription tokens (plan §5.4).
 
 ## Cleanup
 
