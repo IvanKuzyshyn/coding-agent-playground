@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/huh"
+	"github.com/spf13/cobra"
 )
 
 const (
@@ -27,6 +28,27 @@ type tool struct {
 }
 
 func main() {
+	cmd := &cobra.Command{
+		Use:   "credentials",
+		Short: "Set up the Claude, Codex and GitHub credentials the Terrarium gateway uses",
+		Long: "Pick the tools to configure, then follow each login:\n" +
+			"  Claude  claude setup-token, token stored in the keychain as " + claudeKeychain + "\n" +
+			"  Codex   codex login with CODEX_HOME=~/.terrarium/codex (separate from ~/.codex)\n" +
+			"  GitHub  the gh login's token (or a pasted fine-grained token) in the keychain as " + githubKeychain + "\n" +
+			"Run on the host (make credentials); it needs a terminal, a browser and the macOS keychain.",
+		Args:         cobra.NoArgs,
+		SilenceUsage: true,
+		RunE:         func(*cobra.Command, []string) error { return configure() },
+	}
+	cmd.CompletionOptions.DisableDefaultCmd = true
+	if err := cmd.Execute(); err != nil {
+		os.Exit(1)
+	}
+}
+
+var errSetupFailed = errors.New("some credentials were not configured")
+
+func configure() error {
 	tools := []tool{
 		{"Claude", func() bool { return keychainHas(claudeKeychain) }, setupClaude},
 		{"Codex", codexConfigured, setupCodex},
@@ -42,7 +64,7 @@ func main() {
 		Options(options...).
 		Value(&selected).
 		Run(); err != nil {
-		fail(err)
+		return err
 	}
 
 	failed := false
@@ -52,7 +74,7 @@ func main() {
 		if t.configured() {
 			again := false
 			if err := huh.NewConfirm().Title(t.name + " is already configured. Set it up again?").Value(&again).Run(); err != nil {
-				fail(err)
+				return err
 			}
 			if !again {
 				continue
@@ -66,8 +88,9 @@ func main() {
 		fmt.Printf("%s configured.\n", t.name)
 	}
 	if failed {
-		os.Exit(1)
+		return errSetupFailed
 	}
+	return nil
 }
 
 func setupClaude() error {
@@ -183,9 +206,4 @@ func keychainSet(service, token string) error {
 		return fmt.Errorf("keychain: %v: %s", err, out)
 	}
 	return nil
-}
-
-func fail(err error) {
-	fmt.Fprintln(os.Stderr, err)
-	os.Exit(1)
 }

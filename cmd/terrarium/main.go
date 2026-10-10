@@ -11,46 +11,73 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/spf13/cobra"
+
 	"terrarium/internal/config"
 	"terrarium/internal/store"
 )
 
 func main() {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
-	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: terrarium server|gateway|migrate")
-		os.Exit(2)
-	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-
-	var err error
-	switch os.Args[1] {
-	case "server":
-		err = runServer(ctx)
-	case "gateway":
-		err = runGateway(ctx)
-	case "migrate":
-		err = runMigrate(ctx)
-	case "healthcheck":
-		// Distroless images have no curl; compose healthchecks call the binary instead.
-		err = runHealthcheck(ctx, os.Args[2:])
-	default:
-		err = fmt.Errorf("unknown command %q", os.Args[1])
-	}
-	if err != nil {
-		slog.Error("exit", "cmd", os.Args[1], "err", err)
+	if err := rootCmd().ExecuteContext(ctx); err != nil {
 		os.Exit(1)
 	}
 }
 
-func runHealthcheck(ctx context.Context, args []string) error {
-	if len(args) != 1 {
-		return fmt.Errorf("usage: terrarium healthcheck <url>")
+func rootCmd() *cobra.Command {
+	root := &cobra.Command{
+		Use:   "terrarium",
+		Short: "Terrarium control plane: API server, credential gateway and migrations",
+		Long: "Terrarium runs coding agents in disposable sandboxes. This binary runs the control-plane\n" +
+			"processes; each is configured through TERRARIUM_* environment variables (internal/config).",
+		// Usage is printed for mistakes in the command line, not for failures while running.
+		PersistentPreRun: func(cmd *cobra.Command, _ []string) { cmd.SilenceUsage = true },
 	}
+	root.CompletionOptions.DisableDefaultCmd = true
+	root.AddCommand(
+		&cobra.Command{
+			Use:   "server",
+			Short: "Run the API, MCP endpoint and the session supervisor",
+			Args:  cobra.NoArgs,
+			RunE:  func(cmd *cobra.Command, _ []string) error { return logged(cmd, runServer(cmd.Context())) },
+		},
+		&cobra.Command{
+			Use:   "gateway",
+			Short: "Run the credential gateway and the sandboxes' egress proxy",
+			Args:  cobra.NoArgs,
+			RunE:  func(cmd *cobra.Command, _ []string) error { return logged(cmd, runGateway(cmd.Context())) },
+		},
+		&cobra.Command{
+			Use:   "migrate",
+			Short: "Apply pending database migrations",
+			Args:  cobra.NoArgs,
+			RunE:  func(cmd *cobra.Command, _ []string) error { return logged(cmd, runMigrate(cmd.Context())) },
+		},
+		&cobra.Command{
+			Use:   "healthcheck <url>",
+			Short: "Exit 0 if GET <url> answers 200 (container healthchecks; images have no curl)",
+			Args:  cobra.ExactArgs(1),
+			RunE:  func(cmd *cobra.Command, args []string) error { return runHealthcheck(cmd.Context(), args[0]) },
+		},
+	)
+	return root
+}
+
+// logged records a failure of a long-running process as a JSON log line, like the rest of its
+// output, before cobra prints it.
+func logged(cmd *cobra.Command, err error) error {
+	if err != nil {
+		slog.Error("exit", "cmd", cmd.Name(), "err", err)
+	}
+	return err
+}
+
+func runHealthcheck(ctx context.Context, url string) error {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, args[0], nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return err
 	}
