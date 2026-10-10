@@ -52,6 +52,7 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 	lastWrite := time.Now()
+	ended := false
 	for {
 		events, err := s.Store.Events(ctx, id, after, kind, 500)
 		if err != nil {
@@ -70,9 +71,14 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 			lastWrite = time.Now()
 			continue // drain backlog before sleeping
 		}
+		if ended {
+			return // the read after observing "stopped" found nothing more
+		}
 		ss, err := s.Store.GetSession(ctx, id)
 		if err == nil && ss.Status == session.StatusStopped {
-			return // everything up to the terminal event has been sent
+			// The terminal event may have committed after the read above; read once more.
+			ended = true
+			continue
 		}
 		if time.Since(lastWrite) > 15*time.Second {
 			fmt.Fprint(w, ": ping\n\n")

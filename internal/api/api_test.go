@@ -426,7 +426,6 @@ func TestEventStream(t *testing.T) {
 // The stream may end between the event query and the status check; the terminal event committed
 // in that window is never sent. EventPoll 0 makes the window a large share of each poll cycle.
 func TestEventStreamDeliversTerminalEvent(t *testing.T) {
-	t.Skip("BUG: api/events.go:58-74 SSE checks for 'stopped' after an empty event read and returns without re-reading, so the stopped lifecycle event can be lost")
 	t.Parallel()
 	e := newEnv(t, 0)
 	for i := range 30 {

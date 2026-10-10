@@ -451,7 +451,6 @@ func TestTurnOutcomes(t *testing.T) {
 // A harness that writes more than one log chunk (1 MiB) and exits before the tail catches up:
 // the tail must keep reading until sandboxd returns no data, not stop after the first chunk.
 func TestOutputLargerThanOneChunkAfterExit(t *testing.T) {
-	t.Skip("BUG: ops/turn.go:124,139 readStream treats a capped 1 MiB read of an exited command as the end of the stream (and its tail as a final line); the rest of stdout, including the result, is dropped")
 	t.Parallel()
 	e := newEnv(t)
 	big := `{"type":"assistant","message":{"content":[{"type":"text","text":"` + strings.Repeat("x", 600<<10) + `"}]}}`
@@ -574,7 +573,6 @@ func TestIsLost(t *testing.T) {
 // A worker that read the session as idle just before DELETE moved it to stopping must not start
 // the harness, but RunTurn ignores that its idle→running transition did not apply.
 func TestRunTurnDoesNotStartOnStoppingSession(t *testing.T) {
-	t.Skip("BUG: ops/turn.go:31 RunTurn ignores SetStatus's changed=false and starts the harness on a session that is no longer idle")
 	t.Parallel()
 	e := newEnv(t)
 	e.fleet.Program = turnPrograms(claudeHappy())

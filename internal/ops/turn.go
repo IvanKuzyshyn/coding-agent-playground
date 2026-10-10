@@ -29,8 +29,20 @@ func (o *Ops) RunTurn(ctx context.Context, s store.Session, t store.Turn) error 
 	seq := t.Seq
 
 	if t.Status == session.TurnQueued {
-		if _, err := o.Store.SetStatus(ctx, s.ID, []string{session.StatusIdle}, session.StatusRunning, fmt.Sprintf("turn %d started", seq)); err != nil {
+		changed, err := o.Store.SetStatus(ctx, s.ID, []string{session.StatusIdle}, session.StatusRunning, fmt.Sprintf("turn %d started", seq))
+		if err != nil {
 			return err
+		}
+		if !changed {
+			// Already running means a crash after this step; anything else (e.g. stopping) means
+			// the session must not start new work.
+			cur, err := o.Store.GetSession(ctx, s.ID)
+			if err != nil {
+				return err
+			}
+			if cur.Status != session.StatusRunning {
+				return nil
+			}
 		}
 		if err := o.Store.SetIdleUntil(ctx, s.ID, nil); err != nil {
 			return err
@@ -120,8 +132,10 @@ func (tl *tail) readStream(ctx context.Context, stream string) (consumed int, do
 		return 0, false, "", err
 	}
 	lines, n := splitLines(data)
-	// A full chunk without a newline, or trailing bytes after exit, is still one line.
-	if (n == 0 && len(data) >= maxChunk) || (state == "exited" && n < len(data)) {
+	// A short read from an exited command reached the end of its output.
+	atEnd := state == "exited" && len(data) < maxChunk
+	// A full chunk without a newline, or trailing bytes at the end of output, is still one line.
+	if (n == 0 && len(data) >= maxChunk) || (atEnd && n < len(data)) {
 		lines = append(lines, data[n:])
 		n = len(data)
 	}
@@ -136,7 +150,8 @@ func (tl *tail) readStream(ctx context.Context, stream string) (consumed int, do
 		}
 	}
 	*off += int64(n)
-	return n, state == "exited" && n == len(data), state, nil
+	// Only an empty read after exit proves the stream is fully consumed (contract: sandboxd.md).
+	return n, state == "exited" && len(data) == 0, state, nil
 }
 
 func (tl *tail) handleStdout(ctx context.Context, line []byte) {

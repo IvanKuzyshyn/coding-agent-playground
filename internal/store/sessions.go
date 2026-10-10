@@ -190,7 +190,7 @@ func (s *Store) SetStatus(ctx context.Context, id uuid.UUID, from []string, to, 
 
 // Fail records an error and moves a non-terminal session to failed.
 func (s *Store) Fail(ctx context.Context, id uuid.UUID, msg string) (bool, error) {
-	if _, err := s.pool.Exec(ctx, `UPDATE sessions SET error = $2 WHERE id = $1 AND status NOT IN ('stopped','failed')`, id, msg); err != nil {
+	if _, err := s.pool.Exec(ctx, `UPDATE sessions SET error = $2 WHERE id = $1 AND status IN ('pending','provisioning','idle','running')`, id, msg); err != nil {
 		return false, err
 	}
 	return s.SetStatus(ctx, id, []string{session.StatusPending, session.StatusProvisioning, session.StatusIdle, session.StatusRunning}, session.StatusFailed, msg)

@@ -431,7 +431,6 @@ func TestSecondSupervisorWaitsForLock(t *testing.T) {
 // running case is detected (when a turn's sandboxd call fails); an idle session whose sandbox
 // vanished stays idle until its idle timeout.
 func TestLostSandboxWhileIdle(t *testing.T) {
-	t.Skip("BUG: supervisor/supervisor.go:71-89 reconcile never checks idle sessions for a lost sandbox; the session stays idle")
 	t.Parallel()
 	e := newEnv(t)
 	e.fleet.Program = turns(claudeTurn())

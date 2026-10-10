@@ -81,6 +81,16 @@ func (s *Supervisor) reconcile(ctx context.Context) error {
 		if err := s.enforceDeadlines(ctx, ss, now); err != nil {
 			s.Log.Error("deadlines", "session", ss.ID, "err", err)
 		}
+		if ss.Status == session.StatusIdle {
+			// Running sessions notice a lost sandbox in their tail loop; idle ones only here.
+			if lost, err := s.Ops.IsLost(ctx, ss); err != nil {
+				s.Log.Error("check sandbox", "session", ss.ID, "err", err)
+			} else if lost {
+				if _, err := s.Store.Fail(ctx, ss.ID, "sandbox lost"); err != nil {
+					s.Log.Error("fail lost session", "session", ss.ID, "err", err)
+				}
+			}
+		}
 		s.ensureWorker(ctx, ss.ID)
 	}
 	return nil
