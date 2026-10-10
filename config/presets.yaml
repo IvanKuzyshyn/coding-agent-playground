@@ -1,0 +1,20 @@
+# Session presets. Resolved and frozen into the SessionSpec at creation; editing this file
+# affects only new sessions.
+defaults:
+  image: terrarium-agent:local
+  resources: { cpus: 2, memory_mb: 4096, pids: 1024 }
+  network:
+    allow: [github.com, codeload.github.com, registry.npmjs.org, pypi.org, files.pythonhosted.org]
+  limits:
+    max_agent_steps: 50
+    token_budget: 2000000
+    idle_timeout_seconds: 1800
+    ttl_seconds: 14400
+
+presets:
+  default: {}
+
+  # Narrow preset for read-only exploration of a public repository.
+  explore:
+    network: { allow: [github.com, codeload.github.com] }
+    limits: { max_agent_steps: 30, token_budget: 500000 }

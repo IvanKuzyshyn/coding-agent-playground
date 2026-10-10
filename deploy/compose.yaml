@@ -1,0 +1,74 @@
+name: terrarium
+
+x-control-plane: &control-plane
+  build:
+    context: ..
+    dockerfile: deploy/Dockerfile
+  image: terrarium-control-plane:local
+  environment: &cp-env
+    DATABASE_URL: postgres://terrarium:terrarium@postgres:5432/terrarium?sslmode=disable
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: terrarium
+      POSTGRES_PASSWORD: terrarium
+      POSTGRES_DB: terrarium
+    ports: ["127.0.0.1:55432:5432"]
+    volumes: [postgres-data:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "terrarium", "-d", "terrarium"]
+      interval: 2s
+      retries: 30
+
+  migrate:
+    <<: *control-plane
+    command: ["migrate"]
+    depends_on: { postgres: { condition: service_healthy } }
+    restart: "no"
+    profiles: [tools]
+
+  server:
+    <<: *control-plane
+    command: ["server"]
+    # Creates sandboxes through the Docker socket. Socket access is root-equivalent on the host;
+    # in the real setup this moves to a sandbox runtime API (see threat model).
+    user: root
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ../config:/etc/terrarium:ro
+    ports: ["127.0.0.1:8080:8080"]
+    networks: [default, sandbox]
+    depends_on: { postgres: { condition: service_healthy } }
+    healthcheck:
+      test: ["CMD", "/terrarium", "healthcheck", "http://127.0.0.1:8080/healthz"]
+      interval: 2s
+      retries: 30
+
+  gateway:
+    <<: *control-plane
+    command: ["gateway"]
+    secrets: [claude_oauth_token]
+    volumes:
+      # Dedicated Codex login owned by the gateway (`make codex-login`). Never the host's ~/.codex.
+      - ${HOME}/.terrarium/codex:/var/lib/terrarium/codex
+    networks: [default, sandbox]
+    depends_on: { postgres: { condition: service_healthy } }
+    healthcheck:
+      test: ["CMD", "/terrarium", "healthcheck", "http://127.0.0.1:8080/healthz"]
+      interval: 2s
+      retries: 30
+
+secrets:
+  claude_oauth_token:
+    # Filled from the macOS keychain by the Makefile; never written to disk in the repo.
+    environment: TERRARIUM_CLAUDE_OAUTH_TOKEN
+
+networks:
+  sandbox:
+    name: terrarium-sandbox
+    internal: true
+
+volumes:
+  postgres-data:
