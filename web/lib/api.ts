@@ -2,7 +2,7 @@ import "server-only";
 
 import { redirect } from "next/navigation";
 import { requireAuth } from "./auth";
-import type { Preset, Session, Turn } from "./types";
+import type { Session, SessionList, Stats, Turn } from "./types";
 
 export const API_URL = (process.env.TERRARIUM_API_URL || "http://127.0.0.1:8080").replace(/\/$/, "");
 
@@ -48,16 +48,10 @@ export async function whoami(token: string): Promise<{ name: string }> {
   return (await res.json()) as { name: string };
 }
 
-export const listSessions = () => api<{ sessions: Session[] }>("/sessions").then((r) => r.sessions);
+// `search` is the query string built by `apiSearch` in lib/query.ts.
+export const listSessions = (search: string) => api<SessionList>(`/sessions?${search}`);
+export const getStats = () => api<Stats>("/stats");
 export const getSession = (id: string) => api<Session>(`/sessions/${encodeURIComponent(id)}`);
-export const listPresets = () => api<{ presets: Preset[] }>("/presets").then((r) => r.presets);
-
-export const createSession = (body: {
-  harness: string;
-  prompt: string;
-  repo?: string;
-  preset?: string;
-}) => api<Session>("/sessions", { method: "POST", body: JSON.stringify(body) });
 
 export const createTurn = (id: string, prompt: string) =>
   api<Turn>(`/sessions/${encodeURIComponent(id)}/turns`, {

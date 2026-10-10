@@ -1,5 +1,43 @@
-import { redirect } from "next/navigation";
+import { AutoRefresh } from "@/components/auto-refresh";
+import { RunsView } from "@/components/runs/runs-view";
+import { StatTiles } from "@/components/stat-tiles";
+import { TopNav } from "@/components/top-nav";
+import { ApiError, getSession, getStats, listSessions } from "@/lib/api";
+import { requireAuth } from "@/lib/auth";
+import { apiSearch, parseQuery } from "@/lib/query";
+import type { Session } from "@/lib/types";
 
-export default function Home() {
-  redirect("/sessions");
+async function loadOpenSession(id: string | null): Promise<{ session: Session | null; error: string | null }> {
+  if (!id) return { session: null, error: null };
+  try {
+    return { session: await getSession(id), error: null };
+  } catch (e) {
+    if (e instanceof ApiError) return { session: null, error: e.status === 404 ? "Session not found." : e.message };
+    throw e;
+  }
+}
+
+export default async function Home({ searchParams }: PageProps<"/">) {
+  const { name } = await requireAuth();
+  const query = parseQuery(await searchParams);
+  const [list, stats, open] = await Promise.all([
+    listSessions(apiSearch(query)),
+    getStats(),
+    loadOpenSession(query.session),
+  ]);
+
+  return (
+    <div className="min-h-screen">
+      <TopNav user={name} />
+      <main className="mx-auto flex max-w-[1600px] flex-col gap-4 px-3 py-5 sm:px-6">
+        <div>
+          <h1 className="text-xl font-semibold text-fg">Runs</h1>
+          <p className="text-sm text-muted">Agent sessions running in sandboxes. Updates every few seconds.</p>
+        </div>
+        <AutoRefresh ms={3000} />
+        <StatTiles stats={stats} />
+        <RunsView list={list} openSession={open.session} openError={open.error} />
+      </main>
+    </div>
+  );
 }
