@@ -84,8 +84,13 @@ func (ge *githubEnv) taken() []githubCall {
 
 func pktLine(s string) string { return fmt.Sprintf("%04x%s", len(s)+4, s) }
 
-func pushBody(ref, newOID string) string {
-	old := strings.Repeat("a", 40)
+var (
+	none     = strings.Repeat("0", 40) // the ref does not exist on that side
+	existing = strings.Repeat("a", 40)
+	newer    = strings.Repeat("b", 40)
+)
+
+func pushBody(ref, old, newOID string) string {
 	return pktLine("shallow "+strings.Repeat("c", 40)+"\n") +
 		pktLine(old+" "+newOID+" "+ref+"\x00report-status side-band-64k\n") + "0000" + "PACK-binary-data"
 }
@@ -154,14 +159,17 @@ func TestGitHubDenials(t *testing.T) {
 		{"api user", "GET", "/github/api/user", basic(secret), "", 403},
 		{"ended session", "GET", "/github/octo/hello.git/info/refs?service=git-upload-pack", basic(ended), "", 403},
 		{"no repo", "GET", "/github/octo/hello.git/info/refs?service=git-upload-pack", basic(noRepo), "", 403},
-		{"push main", "POST", "/github/octo/hello.git/git-receive-pack", basic(secret), pushBody("refs/heads/main", strings.Repeat("b", 40)), 403},
-		{"push other session", "POST", "/github/octo/hello.git/git-receive-pack", basic(secret),
-			pushBody("refs/heads/"+session.BranchPrefix(uuid.NewString())+"x", strings.Repeat("b", 40)), 403},
+		{"create unprefixed branch", "POST", "/github/octo/hello.git/git-receive-pack", basic(secret), pushBody("refs/heads/feature", none, newer), 403},
+		{"create other session's branch", "POST", "/github/octo/hello.git/git-receive-pack", basic(secret),
+			pushBody("refs/heads/"+session.BranchPrefix(uuid.NewString())+"x", none, newer), 403},
+		{"delete branch", "POST", "/github/octo/hello.git/git-receive-pack", basic(secret), pushBody("refs/heads/feature", existing, none), 403},
 		{"delete own branch", "POST", "/github/octo/hello.git/git-receive-pack", basic(secret),
-			pushBody("refs/heads/"+session.BranchPrefix(id.String())+"x", zeroOID), 403},
-		{"push tag", "POST", "/github/octo/hello.git/git-receive-pack", basic(secret), pushBody("refs/tags/v1", strings.Repeat("b", 40)), 403},
+			pushBody("refs/heads/"+session.BranchPrefix(id.String())+"x", existing, none), 403},
+		{"push tag", "POST", "/github/octo/hello.git/git-receive-pack", basic(secret), pushBody("refs/tags/v1", none, newer), 403},
+		{"update tag", "POST", "/github/octo/hello.git/git-receive-pack", basic(secret), pushBody("refs/tags/v1", existing, newer), 403},
 		{"malformed push", "POST", "/github/octo/hello.git/git-receive-pack", basic(secret), "zzzz", 400},
-		{"pr from main", "POST", "/github/api/repos/octo/hello/pulls", basic(secret), `{"head":"main","base":"dev"}`, 403},
+		{"pr from a fork", "POST", "/github/api/repos/octo/hello/pulls", basic(secret), `{"head":"attacker:main","base":"main"}`, 403},
+		{"pr without head", "POST", "/github/api/repos/octo/hello/pulls", basic(secret), `{"base":"main"}`, 403},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -191,7 +199,7 @@ func TestGitHubPushToSessionBranch(t *testing.T) {
 	secret, id := ge.addSession(session.StatusRunning, "octo/hello")
 	ref := "refs/heads/" + session.BranchPrefix(id.String()) + "fix-readme"
 	// Larger than bufio's buffer, so part of the pack is still unread when the commands are checked.
-	body := pushBody(ref, strings.Repeat("b", 40)) + strings.Repeat("P", 70000)
+	body := pushBody(ref, none, newer) + strings.Repeat("P", 70000)
 
 	r := ge.do("GET", "/github/octo/hello.git/info/refs?service=git-receive-pack", basic(secret), "")
 	if r.status != http.StatusOK {
@@ -243,12 +251,36 @@ func TestGitHubWithoutToken(t *testing.T) {
 		t.Errorf("fetch without token sent auth %+v", calls)
 	}
 	r = ge.do("POST", "/github/octo/hello.git/git-receive-pack", basic(secret),
-		pushBody("refs/heads/"+session.BranchPrefix(id.String())+"x", strings.Repeat("b", 40)))
+		pushBody("refs/heads/"+session.BranchPrefix(id.String())+"x", none, newer))
 	if r.status != http.StatusServiceUnavailable {
 		t.Errorf("push without token: %d", r.status)
 	}
 	r = ge.do("POST", "/github/api/repos/octo/hello/pulls", basic(secret), `{"head":"`+session.BranchPrefix(id.String())+`x"}`)
 	if r.status != http.StatusServiceUnavailable {
 		t.Errorf("pr without token: %d", r.status)
+	}
+}
+
+func TestGitHubPushUpdatesExistingBranches(t *testing.T) {
+	ge := newGitHubEnv(t, realGitHubToken)
+	secret, _ := ge.addSession(session.StatusRunning, "octo/hello")
+	for _, ref := range []string{"refs/heads/add-feature", "refs/heads/main"} {
+		if r := ge.do("POST", "/github/octo/hello.git/git-receive-pack", basic(secret), pushBody(ref, existing, newer)); r.status != http.StatusOK {
+			t.Errorf("update %s: %d %s", ref, r.status, r.body)
+		}
+	}
+	// A PR may come from any branch of the repository.
+	if r := ge.do("POST", "/github/api/repos/octo/hello/pulls", basic(secret), `{"head":"add-feature","base":"main"}`); r.status != http.StatusOK {
+		t.Errorf("pr from existing branch: %d %s", r.status, r.body)
+	}
+	if n := len(ge.taken()); n != 3 {
+		t.Errorf("%d requests reached GitHub, want 3", n)
+	}
+}
+
+func TestPushAllowedSHA256(t *testing.T) {
+	zero256 := strings.Repeat("0", 64)
+	if msg := pushAllowed(pushCommand{zero256, strings.Repeat("b", 64), "refs/heads/feature"}, "terrarium/s/"); msg == "" {
+		t.Error("SHA-256 zero id not treated as a new branch")
 	}
 }

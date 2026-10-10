@@ -30,7 +30,6 @@ const (
 const (
 	maxPRBody       = 1 << 20
 	maxPushCommands = 1 << 20
-	zeroOID         = "0000000000000000000000000000000000000000"
 )
 
 type githubKind int
@@ -104,9 +103,9 @@ func (g *Gateway) serveGitHub(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		for _, c := range refs {
-			if !strings.HasPrefix(c.ref, "refs/heads/"+prefix) || c.newOID == zeroOID {
-				g.denyGitHub(ctx, s, r, "push to "+truncate(c.ref))
-				writeError(w, http.StatusForbidden, "push only to new or updated refs/heads/"+prefix+"* branches")
+			if msg := pushAllowed(c, prefix); msg != "" {
+				g.denyGitHub(ctx, s, r, "push to "+truncate(c.ref)+": "+msg)
+				writeError(w, http.StatusForbidden, msg)
 				return
 			}
 		}
@@ -122,9 +121,10 @@ func (g *Gateway) serveGitHub(w http.ResponseWriter, r *http.Request) {
 		var pr struct {
 			Head string `json:"head"`
 		}
-		if json.Unmarshal(body, &pr) != nil || !strings.HasPrefix(pr.Head, prefix) {
+		// "owner:branch" names a branch in another repository (a fork); only this one is allowed.
+		if json.Unmarshal(body, &pr) != nil || pr.Head == "" || strings.Contains(pr.Head, ":") {
 			g.denyGitHub(ctx, s, r, "pr head "+truncate(pr.Head))
-			writeError(w, http.StatusForbidden, "pull request head must be a "+prefix+"* branch")
+			writeError(w, http.StatusForbidden, "pull request head must be a branch of this repository")
 			return
 		}
 		r.Body = io.NopCloser(bytes.NewReader(body))
@@ -186,6 +186,27 @@ func (g *Gateway) githubURL(base *url.URL, path, query string) *url.URL {
 }
 
 type pushCommand struct{ oldOID, newOID, ref string }
+
+// zero reports git's all-zero object id (SHA-1 or SHA-256 length), which marks a ref that does
+// not exist on one side of the update.
+func zero(oid string) bool { return oid != "" && strings.Trim(oid, "0") == "" }
+
+// pushAllowed returns why a ref update is refused, or "". Branches that already exist may be
+// updated; new ones must use the session's prefix; deletes and non-branch refs are refused.
+// GitHub applies an update only if oldOID matches the branch, so a non-zero oldOID cannot create
+// a branch.
+func pushAllowed(c pushCommand, prefix string) string {
+	branch, ok := strings.CutPrefix(c.ref, "refs/heads/")
+	switch {
+	case !ok:
+		return "only branches can be pushed"
+	case zero(c.newOID):
+		return "deleting branches is not allowed"
+	case zero(c.oldOID) && !strings.HasPrefix(branch, prefix):
+		return "new branches must be named " + prefix + "<name>"
+	}
+	return ""
+}
 
 // readPushCommands reads the receive-pack command list (pkt-lines up to the first flush) and
 // returns it with the raw bytes consumed, so they can be replayed upstream before the pack.

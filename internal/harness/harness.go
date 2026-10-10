@@ -127,9 +127,11 @@ func agentGuide(spec session.Spec, sessionID string) string {
 
 Only when the user asks you to push or open a pull request:
 
-1. Commit on a branch named %s<short-slug> (other branches are rejected).
+1. Commit on the branch you were asked to use if it already exists on origin; otherwise create
+   one named %s<short-slug> (new branches with other names are rejected). Branches cannot be
+   deleted.
 2. git push -u origin <branch>
-3. terrarium-pr "<title>" "<body>" opens the pull request on %s.
+3. terrarium-pr "<title>" "<body>" opens the pull request on %s from the current branch.
 
 No other GitHub repository or API is reachable.
 `, session.BranchPrefix(sessionID), spec.Repo)

@@ -43,7 +43,7 @@ prompt-injected agent is equivalent to an attacker with a shell as uid 1000 in t
 |---|---|---|
 | Internet (arbitrary host) | No | `terrarium-sandbox` is an `internal` Docker network: no route, no external DNS. Only the gateway is reachable |
 | Allowlisted hosts (package registries) | Yes, port 443 only | CONNECT proxy with per-session allowlist from the frozen spec |
-| GitHub | The session's repository only: fetch, push to `terrarium/<session-id>/*`, open a PR from such a branch | Gateway `/github/` route; GitHub is not on the CONNECT allowlist |
+| GitHub | The session's repository only: fetch, update existing branches (including the default branch), create branches named `terrarium/<session-id>/*`, open PRs from its own branches | Gateway `/github/` route; GitHub is not on the CONNECT allowlist |
 | Real Claude / Codex credentials | No | The sandbox holds placeholders derived from a per-session secret; the gateway swaps them |
 | Inference on the engineer's subscription | Yes, until the session ends or its token budget is spent | The placeholder is a capability for the gateway; it dies with the session |
 | Other sessions' sandboxes | Network yes, control no | Shared network; sandboxd requires a per-sandbox token that agents never see |
@@ -91,8 +91,9 @@ The platform does not try to detect injection; it limits what an injected agent 
 |---|---|---|
 | Arbitrary HTTPS | Default deny | Demonstrated |
 | DNS tunnelling | No external DNS on the internal network | Demonstrated (`getent hosts example.com` fails in the sandbox) |
-| `git push` to an attacker repo, gist | GitHub only via the gateway route: the session's repository, `terrarium/<session-id>/*` branches, PR creation only | Demonstrated (live drill: push to `main` and fetch of another repo both `403`, recorded as egress events; gateway tests) |
-| Pushed content on the session's own branch / PR | Visible to everyone who can read the repository; never merged automatically | **Residual risk.** A prompt-injected agent can publish workspace data to its branch or PR body |
+| `git push` to an attacker repo, gist | GitHub only via the gateway route: the session's repository only; new branches only as `terrarium/<session-id>/*`; no deletes or tags; PR creation only | Demonstrated (live drill: fetch of another repo `403`, recorded as an egress event; gateway tests) |
+| Pushes to existing branches | Allowed for any existing branch, so agents can continue work on a feature branch | **Residual risk.** A prompt-injected agent can push (including force-push) to any existing branch, the default branch included. Protect important branches with GitHub branch protection; the gateway cannot tell a force-push from a normal one |
+| Pushed content on the session's branches / PR | Visible to everyone who can read the repository; never merged automatically | **Residual risk.** A prompt-injected agent can publish workspace data to a branch or PR body |
 | Allowed hosts: `npm publish` | Allowlist by host only today | **Residual risk.** Design: package registries through a read-only mirror |
 | The model API itself (data in prompts) | Cannot be closed; inference is the product | Residual, documented. Data reaching the vendor is what the engineer already accepts by using the agent |
 | Covert channels via request timing / sizes to allowed hosts | – | Out of scope |

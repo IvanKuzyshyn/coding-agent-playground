@@ -66,8 +66,8 @@ the spec's spelling.
 | `GET /github/{repo}.git/info/refs?service=git-upload-pack` | `https://github.com/{repo}.git/...` | only the `service` query parameter |
 | `POST /github/{repo}.git/git-upload-pack` | same | – |
 | `GET /github/{repo}.git/info/refs?service=git-receive-pack` | same | GitHub token required |
-| `POST /github/{repo}.git/git-receive-pack` | same | Every ref update targets `refs/heads/terrarium/<session-id>/*` and is not a delete; encoded bodies `415` |
-| `POST /github/api/repos/{repo}/pulls` | `https://api.github.com/repos/{repo}/pulls` | JSON `head` starts with `terrarium/<session-id>/` |
+| `POST /github/{repo}.git/git-receive-pack` | same | Every ref update is a branch (`refs/heads/*`) and not a delete. Existing branches (non-zero old id) may be updated; new branches (zero old id) must be `refs/heads/terrarium/<session-id>/*`. GitHub applies an update only if the old id matches, so a non-zero old id cannot create a branch. Encoded bodies `415` |
+| `POST /github/api/repos/{repo}/pulls` | `https://api.github.com/repos/{repo}/pulls` | JSON `head` is a branch name of this repository (no `owner:` fork prefix) |
 | anything else | – | `403`, egress event `denied` |
 
 - No `Authorization` → `401` with `WWW-Authenticate: Basic` (git only sends credentials after a

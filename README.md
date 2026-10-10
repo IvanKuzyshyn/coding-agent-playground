@@ -72,8 +72,8 @@ curl -s -XPOST localhost:8080/sessions/$ID/turns/current/stop -H "$H"
 curl -s "localhost:8080/sessions/$ID/events?kind=egress" -H "$H" | jq '.events[].payload'
 curl -s -XDELETE localhost:8080/sessions/$ID -H "$H"
 
-# push and open a PR as you (needs GitHub in `make credentials`); the agent may only push to
-# terrarium/<session-id>/* branches of the session's repo
+# push and open a PR as you (needs GitHub in `make credentials`); in the session's repo the agent
+# may update existing branches and create new ones named terrarium/<session-id>/*
 curl -s -XPOST localhost:8080/sessions -H "$H" \
   -d '{"name":"readme fix","harness":"codex","repo":"<you>/<repo>","prompt":"Fix a typo in README.md, push and open a PR."}'
 ```
