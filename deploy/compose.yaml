@@ -61,6 +61,16 @@ services:
       interval: 2s
       retries: 30
 
+  web:
+    build: ../web
+    image: terrarium-web:local
+    environment:
+      TERRARIUM_API_URL: http://server:8080
+      # Encrypts the session cookie that carries the engineer's API token; created by `make up`.
+      TERRARIUM_WEB_SECRET: ${TERRARIUM_WEB_SECRET:-}
+    ports: ["127.0.0.1:3000:3000"]
+    depends_on: { server: { condition: service_healthy } }
+
 secrets:
   session_key:
     # Derives per-session gateway secrets; created once by `make up`.

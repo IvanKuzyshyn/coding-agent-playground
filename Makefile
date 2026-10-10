@@ -5,10 +5,12 @@ CODEX_HOME_DIR := $(HOME)/.terrarium/codex
 
 .PHONY: up deps-up down reset migrate logs ps build test vet image-agent token codex-login
 
-up: image-agent ## Start postgres, server and gateway
+up: image-agent ## Start postgres, server, gateway and web UI
 	@mkdir -p $(CODEX_HOME_DIR)
 	@test -f $(HOME)/.terrarium/session.key || (umask 077 && openssl rand -hex 32 > $(HOME)/.terrarium/session.key)
-	TERRARIUM_CLAUDE_OAUTH_TOKEN="$(CLAUDE_TOKEN)" $(COMPOSE) up -d --build --wait postgres server gateway
+	@test -f $(HOME)/.terrarium/web.secret || (umask 077 && openssl rand -hex 32 > $(HOME)/.terrarium/web.secret)
+	TERRARIUM_CLAUDE_OAUTH_TOKEN="$(CLAUDE_TOKEN)" TERRARIUM_WEB_SECRET="$$(cat $(HOME)/.terrarium/web.secret)" \
+		$(COMPOSE) up -d --build --wait postgres server gateway web
 
 deps-up: ## Start postgres only
 	$(COMPOSE) up -d --wait postgres
