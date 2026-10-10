@@ -232,7 +232,7 @@ func TestLostSandboxMidTurn(t *testing.T) {
 	e.waitStarted(t, s.ID, 1)
 	e.fleet.Lose(s.ID)
 
-	s = e.waitStatus(t, s.ID, session.StatusStopped)
+	s = e.waitStatus(t, s.ID, session.StatusFailed)
 	if s.Error != "sandbox lost" {
 		t.Errorf("session error %q", s.Error)
 	}
@@ -240,7 +240,7 @@ func TestLostSandboxMidTurn(t *testing.T) {
 		t.Errorf("turn: %+v", tn)
 	}
 	got := testutil.Statuses(testutil.MustEvents(t, e.st, s.ID))
-	if want := []string{"pending", "provisioning", "idle", "running", "failed", "stopped"}; !slices.Equal(got, want) {
+	if want := []string{"pending", "provisioning", "idle", "running", "stopping", "failed"}; !slices.Equal(got, want) {
 		t.Errorf("statuses %v, want %v", got, want)
 	}
 }
@@ -287,7 +287,7 @@ func TestProvisionFailsAfterMaxAttempts(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.start(t)
-	s = e.waitStatus(t, s.ID, session.StatusStopped)
+	s = e.waitStatus(t, s.ID, session.StatusFailed)
 	if !strings.Contains(s.Error, "provision failed after 3 attempts") {
 		t.Errorf("error %q", s.Error)
 	}
@@ -310,7 +310,7 @@ func TestProvisionCloneFailureFailsSession(t *testing.T) {
 	e.start(t)
 	s := testutil.CreateSession(t, e.st, "alice", spec, "hi")
 
-	s = e.waitStatus(t, s.ID, session.StatusStopped)
+	s = e.waitStatus(t, s.ID, session.StatusFailed)
 	if !strings.HasPrefix(s.Error, "git clone exited 128: fatal: repository") {
 		t.Errorf("error %q", s.Error)
 	}
@@ -318,7 +318,7 @@ func TestProvisionCloneFailureFailsSession(t *testing.T) {
 		t.Errorf("creates %d, sandbox exists %v", e.fleet.Creates(), e.fleet.Exists(s.ID))
 	}
 	got := testutil.Statuses(testutil.MustEvents(t, e.st, s.ID))
-	if want := []string{"pending", "provisioning", "failed", "stopped"}; !slices.Equal(got, want) {
+	if want := []string{"pending", "provisioning", "stopping", "failed"}; !slices.Equal(got, want) {
 		t.Errorf("statuses %v, want %v", got, want)
 	}
 }
@@ -359,7 +359,7 @@ func TestIdleTimeout(t *testing.T) {
 	if err := e.st.SetIdleUntil(context.Background(), s.ID, &past); err != nil {
 		t.Fatal(err)
 	}
-	e.waitStatus(t, s.ID, session.StatusStopped)
+	e.waitStatus(t, s.ID, session.StatusComplete)
 	if e.fleet.Exists(s.ID) {
 		t.Error("sandbox not deleted")
 	}
@@ -379,7 +379,7 @@ func TestTTLExpiryIdleSession(t *testing.T) {
 	if _, err := e.st.Pool().Exec(context.Background(), `UPDATE sessions SET expires_at = now() - interval '1 second' WHERE id = $1`, s.ID); err != nil {
 		t.Fatal(err)
 	}
-	e.waitStatus(t, s.ID, session.StatusStopped)
+	e.waitStatus(t, s.ID, session.StatusComplete)
 	if e.fleet.Exists(s.ID) {
 		t.Error("sandbox not deleted")
 	}
@@ -439,7 +439,7 @@ func TestLostSandboxWhileIdle(t *testing.T) {
 	e.waitTurn(t, s.ID, 1, session.TurnComplete)
 	e.waitStatus(t, s.ID, session.StatusIdle)
 	e.fleet.Lose(s.ID)
-	if s = e.waitStatus(t, s.ID, session.StatusStopped); s.Error != "sandbox lost" {
+	if s = e.waitStatus(t, s.ID, session.StatusFailed); s.Error != "sandbox lost" {
 		t.Errorf("error %q", s.Error)
 	}
 }

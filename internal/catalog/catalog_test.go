@@ -52,3 +52,37 @@ func TestLoadRequiresDefaultPreset(t *testing.T) {
 		t.Error("expected error without default preset")
 	}
 }
+
+func TestResolveLifecycle(t *testing.T) {
+	c, err := Load(filepath.Join("..", "..", "config", "presets.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec, err := c.Resolve(Request{Harness: "codex"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if spec.Lifecycle.OnComplete != "terminate" || spec.Lifecycle.OnFailure != "terminate" || spec.Lifecycle.OnStop != "keep_idle" {
+		t.Errorf("default lifecycle: %+v", spec.Lifecycle)
+	}
+	spec, _ = c.Resolve(Request{Harness: "codex", KeepIdle: true})
+	if spec.Lifecycle.OnComplete != "keep_idle" || spec.Lifecycle.OnFailure != "keep_idle" || spec.Lifecycle.OnStop != "keep_idle" {
+		t.Errorf("keep_idle lifecycle: %+v", spec.Lifecycle)
+	}
+}
+
+func TestResolveRejectsUnknownLifecycleAction(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "p.yaml")
+	yaml := "defaults: {image: x, resources: {cpus: 1, memory_mb: 1, pids: 1}, limits: {ttl_seconds: 1, token_budget: 1},\n" +
+		"  lifecycle: {on_complete: explode, on_failure: terminate, on_stop: keep_idle}}\npresets:\n  default: {}\n"
+	if err := os.WriteFile(p, []byte(yaml), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Resolve(Request{Harness: "codex"}); err == nil {
+		t.Error("unknown lifecycle action accepted")
+	}
+}

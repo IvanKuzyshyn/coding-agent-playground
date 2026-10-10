@@ -124,7 +124,7 @@ func (s *Supervisor) removeOrphans(ctx context.Context) error {
 	}
 	for _, b := range boxes {
 		st, ok := statuses[b.SessionID]
-		if ok && st != session.StatusStopped {
+		if ok && !session.Terminal(st) {
 			continue
 		}
 		s.Log.Info("removing orphan sandbox", "session", b.SessionID, "known", ok)
@@ -138,12 +138,13 @@ func (s *Supervisor) removeOrphans(ctx context.Context) error {
 func (s *Supervisor) enforceDeadlines(ctx context.Context, ss store.Session, now time.Time) error {
 	switch {
 	case ss.Status == session.StatusIdle && ss.IdleUntil != nil && now.After(*ss.IdleUntil):
-		_, err := s.Store.SetStatus(ctx, ss.ID, []string{session.StatusIdle}, session.StatusStopping, "idle timeout")
+		_, err := s.Store.EndSession(ctx, ss.ID, "", "idle timeout", "")
 		return err
-	case now.After(ss.ExpiresAt) && ss.Status != session.StatusStopping && ss.Status != session.StatusFailed:
+	case now.After(ss.ExpiresAt) && ss.Status != session.StatusStopping && !session.Terminal(ss.Status):
 		// Also for running sessions: the tail loop stops the turn when it sees stopping, and this
-		// still applies if the tail is stuck on an unresponsive sandboxd.
-		_, err := s.Store.SetStatus(ctx, ss.ID, []string{ss.Status}, session.StatusStopping, "session ttl expired")
+		// still applies if the tail is stuck on an unresponsive sandboxd. The final status comes
+		// from the last finished turn.
+		_, err := s.Store.EndSession(ctx, ss.ID, "", "session ttl expired", "")
 		return err
 	}
 	return nil
@@ -190,7 +191,7 @@ func (s *Supervisor) work(ctx context.Context, id uuid.UUID) error {
 			return err
 		}
 		switch ss.Status {
-		case session.StatusStopped:
+		case session.StatusComplete, session.StatusFailed, session.StatusStopped:
 			return nil
 
 		case session.StatusPending, session.StatusProvisioning:
@@ -233,15 +234,8 @@ func (s *Supervisor) work(ctx context.Context, id uuid.UUID) error {
 				return s.turnFailed(ctx, ss, t, err)
 			}
 
-		case session.StatusStopping, session.StatusFailed:
-			reason := "stopped"
-			if ss.Status == session.StatusFailed {
-				reason = "failed: " + ss.Error
-			}
-			if err := s.Ops.Cleanup(ctx, ss, reason); err != nil {
-				return err
-			}
-			return nil
+		case session.StatusStopping:
+			return s.Ops.Cleanup(ctx, ss)
 		}
 	}
 }

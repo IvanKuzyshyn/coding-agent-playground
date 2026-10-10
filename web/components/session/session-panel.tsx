@@ -10,7 +10,7 @@ import { RelTime } from "@/components/rel-time";
 import { StatusDot } from "@/components/status-dot";
 import { TokenBar } from "@/components/token-bar";
 import { formatDuration, formatTokens, shortId } from "@/lib/format";
-import { TERMINAL_SESSION, type EgressPayload, type Session, type SessionEvent, type Turn } from "@/lib/types";
+import { ENDED_SESSION, TERMINAL_SESSION, type EgressPayload, type Session, type SessionEvent, type SessionStatus, type Turn } from "@/lib/types";
 import { EventItem, egressReason } from "./event-item";
 import { CloseButton } from "./close-button";
 
@@ -48,7 +48,7 @@ function useEventStream(sessionId: string, initiallyStopped: boolean) {
       lastId = Math.max(lastId, ev.id);
       setEvents((prev) => [...prev, ev]);
       if (ev.kind === "lifecycle") {
-        if (ev.payload.status === "stopped") stoppedRef.current = true;
+        if (ENDED_SESSION.includes(ev.payload.status as SessionStatus)) stoppedRef.current = true;
         scheduleRefresh();
       }
     };
@@ -86,7 +86,7 @@ function useEventStream(sessionId: string, initiallyStopped: boolean) {
 }
 
 export function SessionPanel({ session, onClose }: { session: Session; onClose: () => void }) {
-  const { events, conn } = useEventStream(session.id, session.status === "stopped");
+  const { events, conn } = useEventStream(session.id, ENDED_SESSION.includes(session.status));
   const [tab, setTab] = useState<Tab>("timeline");
   const scrollRef = useRef<HTMLDivElement>(null);
   const denied = events.filter((e) => e.kind === "egress" && e.payload.decision === "denied");
@@ -373,6 +373,12 @@ function Details({ session }: { session: Session }) {
     ["Harness", HARNESS_LABELS[session.harness]],
     ["Repo", session.repo ?? "–"],
     ["Preset", session.preset],
+    [
+      "Lifecycle",
+      session.lifecycle
+        ? `on complete: ${session.lifecycle.on_complete} · on failure: ${session.lifecycle.on_failure} · on stop: ${session.lifecycle.on_stop}`
+        : "–",
+    ],
     ["Model", session.model ?? "harness default"],
     ["Turns", `${session.turn_count}${session.current_turn ? ` (current: ${session.current_turn})` : ""}`],
     ["Tokens", `${session.tokens_used.toLocaleString("en-US")} / ${session.token_budget.toLocaleString("en-US")}`],

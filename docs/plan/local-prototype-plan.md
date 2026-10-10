@@ -109,15 +109,19 @@ stateDiagram-v2
     pending --> provisioning
     provisioning --> idle: sandbox healthy, workspace ready
     idle --> running: turn queued
-    running --> idle: turn finished
-    running --> idle: turn stopped by engineer
+    running --> idle: follow-up queued, or lifecycle rule keep_idle
+    running --> stopping: lifecycle rule terminate
     idle --> stopping: delete / idle timeout / TTL
-    running --> stopping: delete / TTL
-    provisioning --> failed
-    running --> failed: sandbox lost
-    stopping --> stopped: sandbox deleted
-    failed --> stopped: sandbox deleted
+    running --> stopping: delete / TTL / sandbox lost
+    provisioning --> stopping: provisioning failed / delete
+    stopping --> complete: sandbox destroyed, last turn complete
+    stopping --> failed: sandbox destroyed, failure recorded
+    stopping --> stopped: sandbox destroyed, otherwise
 ```
+
+Lifecycle rules (`spec.lifecycle`, preset defaults `on_complete: terminate`, `on_failure:
+terminate`, `on_stop: keep_idle`; `keep_idle: true` on create keeps idle after every outcome) decide
+what happens when a turn ends with nothing queued. See `docs/contracts/api.md` "Lifecycle".
 
 Turn states: `queued → running → complete | failed | stopped | limit_exceeded`.
 

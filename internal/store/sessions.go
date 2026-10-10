@@ -20,6 +20,7 @@ type Session struct {
 	Owner          string
 	Name           string
 	Status         string
+	FinalStatus    string // set while stopping when the final status is already decided
 	Harness        string
 	Spec           session.Spec
 	HarnessSession string
@@ -73,7 +74,7 @@ type NewSession struct {
 // ErrLimit is returned when creating a session would exceed the owner's active-session cap.
 var ErrLimit = errors.New("active session limit reached")
 
-const sessionCols = `s.id, s.owner, s.name, s.status, s.harness, s.spec, coalesce(s.harness_session,''),
+const sessionCols = `s.id, s.owner, s.name, s.status, coalesce(s.final_status,''), s.harness, s.spec, coalesce(s.harness_session,''),
 	coalesce(s.container_id,''), s.sandbox_token, s.tokens_used, s.cost_usd::float8, s.cost_complete,
 	coalesce(s.error,''), s.attempts,
 	s.next_attempt_at, s.idle_until, s.expires_at, s.created_at, s.updated_at, s.ended_at,
@@ -85,7 +86,7 @@ func scanSession(row pgx.Row) (Session, error) {
 		s    Session
 		spec []byte
 	)
-	err := row.Scan(&s.ID, &s.Owner, &s.Name, &s.Status, &s.Harness, &spec, &s.HarnessSession, &s.ContainerID,
+	err := row.Scan(&s.ID, &s.Owner, &s.Name, &s.Status, &s.FinalStatus, &s.Harness, &spec, &s.HarnessSession, &s.ContainerID,
 		&s.SandboxToken, &s.TokensUsed, &s.CostUSD, &s.CostComplete, &s.Error, &s.Attempts, &s.NextAttemptAt, &s.IdleUntil,
 		&s.ExpiresAt, &s.CreatedAt, &s.UpdatedAt, &s.EndedAt, &s.TurnCount, &s.CurrentTurn)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -110,7 +111,7 @@ func (s *Store) CreateSession(ctx context.Context, n NewSession) error {
 				return err
 			}
 			var active int
-			if err := tx.QueryRow(ctx, `SELECT count(*) FROM sessions WHERE owner = $1 AND status NOT IN ('stopped','failed')`, n.Owner).Scan(&active); err != nil {
+			if err := tx.QueryRow(ctx, `SELECT count(*) FROM sessions WHERE owner = $1 AND status NOT IN ('complete','failed','stopped')`, n.Owner).Scan(&active); err != nil {
 				return err
 			}
 			if active >= n.MaxActive {
@@ -160,7 +161,7 @@ func (s *Store) ListSessionsByOwner(ctx context.Context, owner string, limit int
 
 // ActiveSessions returns every session the supervisor still has work for.
 func (s *Store) ActiveSessions(ctx context.Context) ([]Session, error) {
-	return s.listSessions(ctx, `s.status <> 'stopped' ORDER BY s.created_at`)
+	return s.listSessions(ctx, `s.status NOT IN ('complete','failed','stopped') ORDER BY s.created_at`)
 }
 
 // SessionIDs returns all session ids with their status, for orphan detection.
@@ -186,7 +187,7 @@ func (s *Store) SessionStatuses(ctx context.Context, ids []uuid.UUID) (map[uuid.
 
 func (s *Store) CountActiveByOwner(ctx context.Context, owner string) (int, error) {
 	var n int
-	err := s.pool.QueryRow(ctx, `SELECT count(*) FROM sessions WHERE owner = $1 AND status NOT IN ('stopped','failed')`, owner).Scan(&n)
+	err := s.pool.QueryRow(ctx, `SELECT count(*) FROM sessions WHERE owner = $1 AND status NOT IN ('complete','failed','stopped')`, owner).Scan(&n)
 	return n, err
 }
 
@@ -197,8 +198,8 @@ func (s *Store) SetStatus(ctx context.Context, id uuid.UUID, from []string, to, 
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		tag, err := tx.Exec(ctx, `
 			UPDATE sessions SET status = $3, updated_at = now(),
-				ended_at = CASE WHEN $3 = 'stopped' THEN now() ELSE ended_at END,
-				idle_until = CASE WHEN $3 IN ('stopping','stopped','failed') THEN NULL ELSE idle_until END
+				ended_at = CASE WHEN $3 IN ('complete','failed','stopped') THEN now() ELSE ended_at END,
+				idle_until = CASE WHEN $3 IN ('stopping','complete','failed','stopped') THEN NULL ELSE idle_until END
 			WHERE id = $1 AND status = ANY($2)`, id, from, to)
 		if err != nil || tag.RowsAffected() == 0 {
 			return err
@@ -211,12 +212,70 @@ func (s *Store) SetStatus(ctx context.Context, id uuid.UUID, from []string, to, 
 	return changed, err
 }
 
-// Fail records an error and moves a non-terminal session to failed.
+// liveStatuses are the statuses a session can be ended from.
+var liveStatuses = []string{session.StatusPending, session.StatusProvisioning, session.StatusIdle, session.StatusRunning}
+
+// EndSession moves a session to stopping and records the terminal status cleanup will apply
+// (empty: derive it from the last finished turn). errMsg, if set, is stored as the session error.
+// It reports whether the session was live and is now ending.
+func (s *Store) EndSession(ctx context.Context, id uuid.UUID, final, msg, errMsg string) (bool, error) {
+	return s.endSession(ctx, id, final, msg, errMsg, false)
+}
+
+// EndAfterTurn is EndSession for lifecycle rules: it does nothing if a follow-up turn is queued.
+// The row lock serialises it with EnqueueTurn, so a follow-up accepted by the API is never
+// cancelled by a concurrent end.
+func (s *Store) EndAfterTurn(ctx context.Context, id uuid.UUID, final, msg, errMsg string) (bool, error) {
+	return s.endSession(ctx, id, final, msg, errMsg, true)
+}
+
+func (s *Store) endSession(ctx context.Context, id uuid.UUID, final, msg, errMsg string, unlessQueued bool) (bool, error) {
+	var changed bool
+	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		if unlessQueued {
+			if _, err := tx.Exec(ctx, `SELECT 1 FROM sessions WHERE id = $1 FOR UPDATE`, id); err != nil {
+				return err
+			}
+			// A new statement after the lock sees turns committed by a concurrent EnqueueTurn.
+			var queued bool
+			if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM turns WHERE session_id = $1 AND status = 'queued')`, id).Scan(&queued); err != nil {
+				return err
+			}
+			if queued {
+				return nil
+			}
+		}
+		tag, err := tx.Exec(ctx, `
+			UPDATE sessions SET status = 'stopping', final_status = nullif($3, ''),
+				error = coalesce(nullif($4, ''), error), idle_until = NULL, updated_at = now()
+			WHERE id = $1 AND status = ANY($2)`, id, liveStatuses, final, errMsg)
+		if err != nil || tag.RowsAffected() == 0 {
+			return err
+		}
+		changed = true
+		payload, _ := json.Marshal(map[string]string{"status": session.StatusStopping, "message": msg})
+		_, err = tx.Exec(ctx, `INSERT INTO session_events (session_id, kind, payload) VALUES ($1, 'lifecycle', $2)`, id, payload)
+		return err
+	})
+	return changed, err
+}
+
+// Fail ends a live session as failed with msg as its error.
 func (s *Store) Fail(ctx context.Context, id uuid.UUID, msg string) (bool, error) {
-	if _, err := s.pool.Exec(ctx, `UPDATE sessions SET error = $2 WHERE id = $1 AND status IN ('pending','provisioning','idle','running')`, id, msg); err != nil {
-		return false, err
+	return s.EndSession(ctx, id, session.StatusFailed, msg, msg)
+}
+
+// LastFinishedTurnStatus returns the status of the latest turn that ran to an end, or "".
+func (s *Store) LastFinishedTurnStatus(ctx context.Context, id uuid.UUID) (string, error) {
+	var st string
+	err := s.pool.QueryRow(ctx, `
+		SELECT status FROM turns WHERE session_id = $1 AND started_at IS NOT NULL
+			AND status IN ('complete','failed','stopped','limit_exceeded')
+		ORDER BY seq DESC LIMIT 1`, id).Scan(&st)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
 	}
-	return s.SetStatus(ctx, id, []string{session.StatusPending, session.StatusProvisioning, session.StatusIdle, session.StatusRunning}, session.StatusFailed, msg)
+	return st, err
 }
 
 // SetContainerID records the cleanup obligation. Called before the container is created.

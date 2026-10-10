@@ -4,7 +4,7 @@ import { capitalize } from "@/lib/format";
 const DOT: Record<string, string> = {
   pending: "bg-slate-400",
   provisioning: "bg-amber-400",
-  idle: "bg-emerald-400",
+  idle: "bg-violet-400",
   running: "bg-sky-400 animate-pulse",
   stopping: "bg-orange-400",
   stopped: "bg-zinc-500",
@@ -17,7 +17,7 @@ const DOT: Record<string, string> = {
 const TEXT: Record<string, string> = {
   pending: "text-slate-300",
   provisioning: "text-amber-300",
-  idle: "text-emerald-300",
+  idle: "text-violet-300",
   running: "text-sky-300",
   stopping: "text-orange-300",
   stopped: "text-zinc-400",

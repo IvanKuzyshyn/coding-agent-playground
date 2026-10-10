@@ -5,6 +5,10 @@ defaults:
   resources: { cpus: 2, memory_mb: 4096, pids: 1024 }
   network:
     allow: [github.com, codeload.github.com, registry.npmjs.org, pypi.org, files.pythonhosted.org]
+  # What happens when a turn ends and no follow-up is queued: terminate (end the session, destroy
+  # the sandbox) or keep_idle (wait for follow-ups). POST /sessions "keep_idle": true keeps idle
+  # on every outcome.
+  lifecycle: { on_complete: terminate, on_failure: terminate, on_stop: keep_idle }
   limits:
     max_agent_steps: 50
     token_budget: 2000000

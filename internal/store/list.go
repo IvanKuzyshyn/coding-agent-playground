@@ -8,17 +8,12 @@ import (
 	"github.com/google/uuid"
 )
 
-// DisplayStatusSQL is the status engineers see: a session that ended because of an error stays
-// "failed" after cleanup moved it to "stopped".
-const DisplayStatusSQL = `CASE WHEN s.status = 'failed' OR (s.status = 'stopped' AND s.error IS NOT NULL) THEN 'failed' ELSE s.status END`
+// DisplayStatusSQL is kept for the display_status field and filters; since terminal statuses
+// were introduced it equals the status.
+const DisplayStatusSQL = `s.status`
 
 // DisplayStatus is the Go twin of DisplayStatusSQL.
-func DisplayStatus(status, errMsg string) string {
-	if status == "failed" || (status == "stopped" && errMsg != "") {
-		return "failed"
-	}
-	return status
-}
+func DisplayStatus(status, _ string) string { return status }
 
 // Sort keys accepted by ListSessions, mapped to SQL. Values never come from user input directly.
 var sortColumns = map[string]string{
@@ -29,7 +24,7 @@ var sortColumns = map[string]string{
 	"name":       "lower(s.name)",
 	// Lifecycle order rather than alphabetical.
 	"status": `CASE ` + DisplayStatusSQL + ` WHEN 'pending' THEN 1 WHEN 'provisioning' THEN 2 WHEN 'idle' THEN 3
-		WHEN 'running' THEN 4 WHEN 'stopping' THEN 5 WHEN 'stopped' THEN 6 ELSE 7 END`,
+		WHEN 'running' THEN 4 WHEN 'stopping' THEN 5 WHEN 'complete' THEN 6 WHEN 'stopped' THEN 7 ELSE 8 END`,
 }
 
 func ValidSort(key string) bool { _, ok := sortColumns[key]; return ok }
@@ -96,9 +91,9 @@ func (s *Store) Stats(ctx context.Context, owner string) (Stats, error) {
 	err := s.pool.QueryRow(ctx, `
 		SELECT count(*),
 			count(*) FILTER (WHERE s.status = 'running'),
-			count(*) FILTER (WHERE s.status <> 'stopped'),
-			count(*) FILTER (WHERE `+DisplayStatusSQL+` = 'failed'),
-			count(*) FILTER (WHERE s.status IN ('stopped','failed'))
+			count(*) FILTER (WHERE s.status NOT IN ('complete','failed','stopped')),
+			count(*) FILTER (WHERE s.status = 'failed'),
+			count(*) FILTER (WHERE s.status IN ('complete','failed','stopped'))
 		FROM sessions s WHERE s.owner = $1`, owner).Scan(&st.Total, &st.Running, &st.Active, &st.Failed, &ended)
 	if err != nil {
 		return st, err

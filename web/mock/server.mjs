@@ -17,7 +17,7 @@ const sessions = new Map();
 let nextEventId = 1;
 
 const now = () => new Date().toISOString();
-const isActive = (s) => !["stopped", "failed"].includes(s.status);
+const isActive = (s) => !["complete", "stopped", "failed"].includes(s.status);
 
 function emit(s, kind, payload, turnSeq, ts = now()) {
   const ev = { id: nextEventId++, session_id: s.id, kind, payload, ts };

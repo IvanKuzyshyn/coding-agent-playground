@@ -280,10 +280,36 @@ func (o *Ops) finishTurn(ctx context.Context, s store.Session, t store.Turn, tl 
 	o.event(ctx, s.ID, store.EventLifecycle, &seq, map[string]string{"turn_status": status})
 
 	if tl.stopReason == "session ttl expired" {
-		_, err := o.Store.SetStatus(ctx, s.ID, []string{session.StatusRunning}, session.StatusStopping, tl.stopReason)
+		_, err := o.Store.EndSession(ctx, s.ID, "", tl.stopReason, "")
 		return err
 	}
-	return o.BecomeIdle(ctx, s, []string{session.StatusRunning}, fmt.Sprintf("turn %d %s", seq, status))
+	return o.applyLifecycle(ctx, s, seq, status, errMsg)
+}
+
+// applyLifecycle decides what follows a finished turn: a queued follow-up always runs next;
+// otherwise the session's lifecycle rule for this outcome either keeps the sandbox idle or ends
+// the session with the matching terminal status.
+func (o *Ops) applyLifecycle(ctx context.Context, s store.Session, seq int, turnStatus, errMsg string) error {
+	msg := fmt.Sprintf("turn %d %s", seq, turnStatus)
+	if _, err := o.Store.ActiveTurn(ctx, s.ID); err == nil {
+		return o.BecomeIdle(ctx, s, []string{session.StatusRunning}, msg+"; follow-up queued")
+	} else if !errors.Is(err, store.ErrNotFound) {
+		return err
+	}
+	if s.Spec.Lifecycle.Action(turnStatus) != session.ActionTerminate {
+		return o.BecomeIdle(ctx, s, []string{session.StatusRunning}, msg)
+	}
+	final := session.FinalStatus(turnStatus)
+	sessionErr := ""
+	if final == session.StatusFailed {
+		sessionErr = fmt.Sprintf("turn %d %s: %s", seq, turnStatus, errMsg)
+	}
+	ended, err := o.Store.EndAfterTurn(ctx, s.ID, final, msg+"; lifecycle: "+session.ActionTerminate, sessionErr)
+	if err != nil || ended {
+		return err
+	}
+	// A follow-up arrived after the check above; run it instead of ending.
+	return o.BecomeIdle(ctx, s, []string{session.StatusRunning}, msg+"; follow-up queued")
 }
 
 // IsLost reports whether the session's sandbox no longer exists or is not running.

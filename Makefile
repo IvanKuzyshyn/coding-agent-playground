@@ -9,6 +9,8 @@ up: image-agent ## Start postgres, server, gateway and web UI
 	@mkdir -p $(CODEX_HOME_DIR)
 	@test -f $(HOME)/.terrarium/session.key || (umask 077 && openssl rand -hex 32 > $(HOME)/.terrarium/session.key)
 	$(COMPOSE) up -d --wait postgres
+	@# Old server code must not act on rows whose meaning a migration changes.
+	$(COMPOSE) stop server
 	$(COMPOSE) run --rm --build migrate
 	@test -f $(HOME)/.terrarium/web.secret || (umask 077 && openssl rand -hex 32 > $(HOME)/.terrarium/web.secret)
 	TERRARIUM_CLAUDE_OAUTH_TOKEN="$(CLAUDE_TOKEN)" TERRARIUM_WEB_SECRET="$$(cat $(HOME)/.terrarium/web.secret)" \

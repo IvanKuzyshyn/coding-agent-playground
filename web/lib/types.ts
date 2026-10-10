@@ -6,10 +6,11 @@ export type SessionStatus =
   | "idle"
   | "running"
   | "stopping"
-  | "stopped"
-  | "failed";
+  | "complete"
+  | "failed"
+  | "stopped";
 
-// Like SessionStatus, but a session that ended because of an error stays "failed".
+// Equal to SessionStatus since complete/failed/stopped became terminal statuses.
 export type DisplayStatus = SessionStatus;
 
 export const DISPLAY_STATUSES: DisplayStatus[] = [
@@ -18,8 +19,9 @@ export const DISPLAY_STATUSES: DisplayStatus[] = [
   "idle",
   "running",
   "stopping",
-  "stopped",
+  "complete",
   "failed",
+  "stopped",
 ];
 
 export type TurnStatus =
@@ -61,6 +63,7 @@ export interface Session {
   display_status: DisplayStatus;
   harness: Harness;
   preset: string;
+  lifecycle?: Lifecycle;
   repo?: string;
   model?: string;
   tokens_used: number;
@@ -112,4 +115,15 @@ export interface EgressPayload {
   reason?: string;
 }
 
-export const TERMINAL_SESSION: SessionStatus[] = ["stopping", "stopped", "failed"];
+// Sessions that accept no more work (stopping is on its way to one of the terminal statuses).
+export const TERMINAL_SESSION: SessionStatus[] = ["stopping", "complete", "failed", "stopped"];
+
+export const ENDED_SESSION: SessionStatus[] = ["complete", "failed", "stopped"];
+
+export type LifecycleAction = "terminate" | "keep_idle";
+
+export interface Lifecycle {
+  on_complete: LifecycleAction;
+  on_failure: LifecycleAction;
+  on_stop: LifecycleAction;
+}

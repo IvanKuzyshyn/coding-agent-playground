@@ -72,10 +72,10 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 			continue // drain backlog before sleeping
 		}
 		if ended {
-			return // the read after observing "stopped" found nothing more
+			return // the read after observing a terminal status found nothing more
 		}
 		ss, err := s.Store.GetSession(ctx, id)
-		if err == nil && ss.Status == session.StatusStopped {
+		if err == nil && session.Terminal(ss.Status) {
 			// The terminal event may have committed after the read above; read once more.
 			ended = true
 			continue

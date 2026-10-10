@@ -21,7 +21,6 @@ import (
 
 	"terrarium/internal/catalog"
 	"terrarium/internal/credentials"
-	"terrarium/internal/session"
 	"terrarium/internal/store"
 )
 
@@ -93,12 +92,13 @@ func (s *Server) presets(w http.ResponseWriter, _ *http.Request) {
 
 func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Name    string `json:"name"`
-		Harness string `json:"harness"`
-		Prompt  string `json:"prompt"`
-		Repo    string `json:"repo"`
-		Preset  string `json:"preset"`
-		Model   string `json:"model"`
+		Name     string `json:"name"`
+		Harness  string `json:"harness"`
+		Prompt   string `json:"prompt"`
+		Repo     string `json:"repo"`
+		Preset   string `json:"preset"`
+		Model    string `json:"model"`
+		KeepIdle bool   `json:"keep_idle"`
 	}
 	if !decode(w, r, &req) {
 		return
@@ -116,7 +116,7 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "repo must be owner/name")
 		return
 	}
-	spec, err := s.Catalog.Resolve(catalog.Request{Harness: req.Harness, Preset: req.Preset, Repo: req.Repo, Model: req.Model})
+	spec, err := s.Catalog.Resolve(catalog.Request{Harness: req.Harness, Preset: req.Preset, Repo: req.Repo, Model: req.Model, KeepIdle: req.KeepIdle})
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -146,7 +146,7 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 }
 
 var (
-	displayStatuses = map[string]bool{"pending": true, "provisioning": true, "idle": true, "running": true, "stopping": true, "stopped": true, "failed": true}
+	displayStatuses = map[string]bool{"pending": true, "provisioning": true, "idle": true, "running": true, "stopping": true, "complete": true, "failed": true, "stopped": true}
 	harnesses       = map[string]bool{"claude-code": true, "codex": true}
 )
 
@@ -247,8 +247,8 @@ func (s *Server) deleteSession(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	from := []string{session.StatusPending, session.StatusProvisioning, session.StatusIdle, session.StatusRunning}
-	if _, err := s.Store.SetStatus(r.Context(), id, from, session.StatusStopping, "deleted by "+owner(r.Context())); err != nil {
+	// The final status comes from the last finished turn (complete, failed or stopped).
+	if _, err := s.Store.EndSession(r.Context(), id, "", "deleted by "+owner(r.Context()), ""); err != nil {
 		s.internal(w, err)
 		return
 	}

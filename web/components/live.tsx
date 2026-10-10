@@ -36,7 +36,7 @@ export function LocalTime({ iso, className }: { iso: string; className?: string 
   );
 }
 
-const ENDED: Session["display_status"][] = ["stopped", "failed"];
+const ENDED: Session["display_status"][] = ["complete", "failed", "stopped"];
 
 // Ticks every second while the session is not stopped; the API value is authoritative otherwise.
 export function LiveDuration({ session }: { session: Pick<Session, "duration_seconds" | "display_status" | "created_at"> }) {

@@ -67,7 +67,7 @@ func TestListFilterSortPaginate(t *testing.T) {
 	mk("Fix flaky test", "codex")
 	mk("fix login bug", "claude-code")
 	failed := mk("Refactor store", "claude-code")
-	if _, err := e.st.Pool().Exec(context.Background(), `UPDATE sessions SET error = 'boom' WHERE id = $1`, failed); err != nil {
+	if _, err := e.st.Pool().Exec(context.Background(), `UPDATE sessions SET status = 'failed', error = 'boom' WHERE id = $1`, failed); err != nil {
 		t.Fatal(err)
 	}
 	e.createNamed(t, bob, "fix bob's thing", "codex") // other owner, never listed
@@ -112,7 +112,7 @@ func TestStats(t *testing.T) {
 	e.stop(t, ok)
 	bad := e.createNamed(t, alice, "c", "codex")
 	e.stop(t, bad)
-	if _, err := e.st.Pool().Exec(context.Background(), `UPDATE sessions SET error = 'boom' WHERE id = $1`, bad); err != nil {
+	if _, err := e.st.Pool().Exec(context.Background(), `UPDATE sessions SET status = 'failed', error = 'boom' WHERE id = $1`, bad); err != nil {
 		t.Fatal(err)
 	}
 	_, body := e.do(t, http.MethodGet, "/stats", alice, nil)

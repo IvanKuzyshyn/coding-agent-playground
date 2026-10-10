@@ -35,6 +35,11 @@ type preset struct {
 		TTLSeconds         int   `yaml:"ttl_seconds"`
 	} `yaml:"limits"`
 	Instructions string `yaml:"instructions"`
+	Lifecycle    struct {
+		OnComplete string `yaml:"on_complete"`
+		OnFailure  string `yaml:"on_failure"`
+		OnStop     string `yaml:"on_stop"`
+	} `yaml:"lifecycle"`
 }
 
 type Catalog struct {
@@ -72,6 +77,8 @@ type Request struct {
 	Preset  string
 	Repo    string
 	Model   string
+	// KeepIdle overrides every lifecycle rule with keep_idle.
+	KeepIdle bool
 }
 
 // Resolve merges defaults with the named preset and freezes the result. Preset values override
@@ -108,7 +115,20 @@ func (c *Catalog) Resolve(r Request) (session.Spec, error) {
 			IdleTimeoutSeconds: pick(p.Limits.IdleTimeoutSeconds, d.Limits.IdleTimeoutSeconds),
 			TTLSeconds:         pick(p.Limits.TTLSeconds, d.Limits.TTLSeconds),
 		},
+		Lifecycle: session.Lifecycle{
+			OnComplete: pick(p.Lifecycle.OnComplete, d.Lifecycle.OnComplete),
+			OnFailure:  pick(p.Lifecycle.OnFailure, d.Lifecycle.OnFailure),
+			OnStop:     pick(p.Lifecycle.OnStop, d.Lifecycle.OnStop),
+		},
 		CatalogDigest: c.digest,
+	}
+	if r.KeepIdle {
+		spec.Lifecycle = session.KeepIdleLifecycle
+	}
+	for _, a := range []string{spec.Lifecycle.OnComplete, spec.Lifecycle.OnFailure, spec.Lifecycle.OnStop} {
+		if !session.ValidAction(a) {
+			return session.Spec{}, fmt.Errorf("preset %q: lifecycle actions must be %q or %q, got %q", name, session.ActionTerminate, session.ActionKeepIdle, a)
+		}
 	}
 	if p.Network.Allow != nil {
 		spec.Network.Allow = p.Network.Allow

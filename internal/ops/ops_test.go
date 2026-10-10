@@ -541,7 +541,7 @@ func TestCleanupIdempotent(t *testing.T) {
 		t.Fatal(err)
 	}
 	for range 2 {
-		if err := e.ops.Cleanup(context.Background(), s, "stopped"); err != nil {
+		if err := e.ops.Cleanup(context.Background(), s); err != nil {
 			t.Fatal(err)
 		}
 	}

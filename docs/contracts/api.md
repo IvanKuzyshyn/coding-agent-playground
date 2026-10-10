@@ -14,15 +14,19 @@ as if it does not exist (`404`).
 | `GET` | `/healthz` | – | `200 {"ok":true}` |
 | `GET` | `/whoami` | – | `200 {"name":"alice"}` |
 | `GET` | `/presets` | – | `200 {"presets":[{"name":"default"},{"name":"explore"}]}` |
-| `POST` | `/sessions` | `{"name":"...", "harness":"claude-code"\|"codex", "prompt":"...", "repo":"owner/name"?, "preset":"default"?, "model":"..."?}` | `202 Session` |
+| `POST` | `/sessions` | `{"name":"...", "harness":"claude-code"\|"codex", "prompt":"...", "repo":"owner/name"?, "preset":"default"?, "model":"..."?, "keep_idle":false?}` | `202 Session` |
 | `GET` | `/sessions` | query: see [Listing](#listing) | `200 {"sessions":[Session], "total": <matching count>}` without `turns` |
 | `GET` | `/stats` | – | `200 Stats` for the caller's sessions |
 | `GET` | `/sessions/{id}` | – | `200 Session` with `turns` |
 | `POST` | `/sessions/{id}/turns` | `{"prompt":"..."}` | `202 Turn` (status `queued`); `409` if the session is not `pending`/`provisioning`/`idle`/`running` |
 | `POST` | `/sessions/{id}/turns/current/stop` | – | `202 {}`; `409` if no turn is running |
-| `DELETE` | `/sessions/{id}` | – | `202 Session` (status becomes `stopping`, then `stopped`) |
+| `DELETE` | `/sessions/{id}` | – | `202 Session` (status becomes `stopping`, then terminal; see [Lifecycle](#lifecycle)) |
 | `GET` | `/sessions/{id}/events` | query `after`, `kind`, `limit` (default 500, max 1000) | `200 {"events":[Event],"next_after":<id>}` |
 | `GET` | `/sessions/{id}/events` with `Accept: text/event-stream` | query `after` or header `Last-Event-ID` | SSE stream (below) |
+
+`keep_idle: true` overrides every lifecycle rule with `keep_idle`: the sandbox waits for follow-ups
+after each turn until it is deleted or times out. By default (preset rules) a session ends as soon as
+a turn completes or fails with nothing queued; see [Lifecycle](#lifecycle).
 
 Validation: `name` required, 1–120 characters after trimming, not unique (sessions are identified
 by `id` only). `prompt` non-empty, ≤ 100 KB. `repo` is `owner/name` (public GitHub repo, cloned into
@@ -35,14 +39,32 @@ by `id` only). `prompt` non-empty, ≤ 100 KB. `repo` is `owner/name` (public Gi
 | Param | Values | Default |
 |---|---|---|
 | `q` | case-insensitive substring of `name` | – |
-| `status` | comma-separated `display_status` values: `pending`, `provisioning`, `idle`, `running`, `stopping`, `stopped`, `failed` | all |
+| `status` | comma-separated statuses: `pending`, `provisioning`, `idle`, `running`, `stopping`, `complete`, `failed`, `stopped` | all |
 | `harness` | comma-separated `claude-code`, `codex` | all |
-| `sort` | `created_at`, `duration`, `cost`, `tokens`, `name`, `status` (lifecycle order: pending, provisioning, idle, running, stopping, stopped, failed) | `created_at` |
+| `sort` | `created_at`, `duration`, `cost`, `tokens`, `name`, `status` (lifecycle order: pending, provisioning, idle, running, stopping, complete, stopped, failed) | `created_at` |
 | `order` | `asc`, `desc` | `desc` |
 | `limit` | 1–200 | 50 |
 | `offset` | ≥ 0 | 0 |
 
 Unknown values → `400`. `total` is the number of sessions matching the filters (for pagination).
+
+## Lifecycle
+
+`complete`, `failed` and `stopped` are terminal: the sandbox has been destroyed and the session
+accepts no more turns. `stopping` means the sandbox is being destroyed.
+
+When a turn ends and no follow-up is queued, the session's `lifecycle` rule for the outcome applies:
+
+| Turn outcome | Rule | `terminate` → | `keep_idle` → |
+|---|---|---|---|
+| `complete` | `on_complete` | session `complete` | `idle` |
+| `failed`, `limit_exceeded` | `on_failure` | session `failed` (error = turn error) | `idle` |
+| `stopped` (engineer) | `on_stop` | session `stopped` | `idle` |
+
+Preset defaults: `on_complete: terminate`, `on_failure: terminate`, `on_stop: keep_idle`. A queued
+follow-up always runs first. A session ended by `DELETE`, idle timeout or TTL gets the outcome of
+its last finished turn (`complete` / `failed`), or `stopped` if none finished. Provisioning
+failures and lost sandboxes end as `failed`.
 
 ## Objects
 
@@ -52,10 +74,9 @@ Unknown values → `400`. `total` is the number of sessions matching the filters
   "id": "uuid",
   "owner": "alice",
   "name": "fix flaky test",
-  "status": "pending|provisioning|idle|running|stopping|stopped|failed",
-  // status, except a session that ended because of an error shows "failed" even after cleanup
-  // moved it to "stopped". Filters use this.
-  "display_status": "pending|provisioning|idle|running|stopping|stopped|failed",
+  "status": "pending|provisioning|idle|running|stopping|complete|failed|stopped",
+  "display_status": "...",          // same as status (kept for compatibility)
+  "lifecycle": {"on_complete": "terminate", "on_failure": "terminate", "on_stop": "keep_idle"},
   "harness": "claude-code|codex",
   "preset": "default",
   "repo": "owner/name",            // omitted if none
@@ -81,10 +102,10 @@ Unknown values → `400`. `total` is the number of sessions matching the filters
 // Stats (caller's sessions)
 {
   "total": 39,          // all sessions ever created
-  "running": 2,         // display_status running (a turn is executing)
-  "active": 5,          // not stopped (pending, provisioning, idle, running, stopping)
-  "failed": 3,          // display_status failed
-  "failure_rate": 0.0769 // failed / ended sessions (stopped + failed); 0 when none ended
+  "running": 2,         // status running (a turn is executing)
+  "active": 5,          // not terminal (pending, provisioning, idle, running, stopping)
+  "failed": 3,          // status failed
+  "failure_rate": 0.0769 // failed / ended sessions (complete + failed + stopped); 0 when none ended
 }
 
 // Turn

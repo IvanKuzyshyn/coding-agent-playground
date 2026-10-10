@@ -194,15 +194,28 @@ func (o *Ops) runToCompletion(ctx context.Context, s store.Session, c SandboxAPI
 	}
 }
 
-// Cleanup deletes the sandbox and ends the session. Safe to call repeatedly.
-func (o *Ops) Cleanup(ctx context.Context, s store.Session, reason string) error {
+// Cleanup deletes the sandbox and moves a stopping session to its terminal status: the one
+// recorded when it was ended, or else the outcome of its last finished turn (complete, failed or
+// stopped). Safe to call repeatedly.
+func (o *Ops) Cleanup(ctx context.Context, s store.Session) error {
 	if err := o.Sandboxes.Delete(ctx, s.ID); err != nil {
 		return err
 	}
-	if err := o.Store.CancelQueuedTurns(ctx, s.ID, session.TurnStopped, "session ended: "+reason); err != nil {
+	if err := o.Store.CancelQueuedTurns(ctx, s.ID, session.TurnStopped, "session ended"); err != nil {
 		return err
 	}
-	_, err := o.Store.SetStatus(ctx, s.ID, []string{session.StatusStopping, session.StatusFailed}, session.StatusStopped, reason)
+	final := s.FinalStatus
+	if final == "" {
+		last, err := o.Store.LastFinishedTurnStatus(ctx, s.ID)
+		if err != nil {
+			return err
+		}
+		final = session.StatusStopped
+		if last != "" {
+			final = session.FinalStatus(last)
+		}
+	}
+	_, err := o.Store.SetStatus(ctx, s.ID, []string{session.StatusStopping}, final, "sandbox destroyed")
 	return err
 }
 
