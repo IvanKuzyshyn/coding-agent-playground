@@ -1,12 +1,12 @@
 import type { ReactNode } from "react";
-import { formatPercent } from "@/lib/format";
+import { formatPercent, formatUsd } from "@/lib/format";
 import type { Stats } from "@/lib/types";
 
 export function StatTiles({ stats }: { stats: Stats }) {
   return (
     <section
       aria-label="Run statistics"
-      className="grid grid-cols-1 divide-y divide-line overflow-hidden rounded-lg border border-line bg-panel sm:grid-cols-3 sm:divide-x sm:divide-y-0"
+      className="grid grid-cols-1 divide-y divide-line overflow-hidden rounded-lg border border-line bg-panel sm:grid-cols-4 sm:divide-x sm:divide-y-0"
     >
       <Tile
         label="Total runs"
@@ -28,6 +28,13 @@ export function StatTiles({ stats }: { stats: Stats }) {
         sub={`${stats.active} active`}
         icon={<path d="M1.5 8.5h3l1.5-4 3 7 1.5-3h4" />}
         tone="text-amber-300"
+      />
+      <Tile
+        label="Total cost"
+        value={formatUsd(stats.total_cost_usd)}
+        sub={stats.cost_complete ? "API list price" : "lower bound"}
+        icon={<path d="M8 2v12 M11 4.5H6.5a2 2 0 0 0 0 4h3a2 2 0 0 1 0 4H5" />}
+        tone="text-emerald-300"
       />
     </section>
   );

@@ -83,6 +83,9 @@ type Stats struct {
 	Active      int     `json:"active"`
 	Failed      int     `json:"failed"`
 	FailureRate float64 `json:"failure_rate"`
+	// API-equivalent spend across all sessions; a lower bound unless CostComplete.
+	TotalCostUSD float64 `json:"total_cost_usd"`
+	CostComplete bool    `json:"cost_complete"`
 }
 
 func (s *Store) Stats(ctx context.Context, owner string) (Stats, error) {
@@ -93,8 +96,11 @@ func (s *Store) Stats(ctx context.Context, owner string) (Stats, error) {
 			count(*) FILTER (WHERE s.status = 'running'),
 			count(*) FILTER (WHERE s.status NOT IN ('complete','failed','stopped')),
 			count(*) FILTER (WHERE s.status = 'failed'),
-			count(*) FILTER (WHERE s.status IN ('complete','failed','stopped'))
-		FROM sessions s WHERE s.owner = $1`, owner).Scan(&st.Total, &st.Running, &st.Active, &st.Failed, &ended)
+			count(*) FILTER (WHERE s.status IN ('complete','failed','stopped')),
+			coalesce(sum(s.cost_usd), 0),
+			coalesce(bool_and(s.cost_complete), true)
+		FROM sessions s WHERE s.owner = $1`, owner).Scan(&st.Total, &st.Running, &st.Active, &st.Failed, &ended,
+		&st.TotalCostUSD, &st.CostComplete)
 	if err != nil {
 		return st, err
 	}

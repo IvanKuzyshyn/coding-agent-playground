@@ -308,6 +308,8 @@ function stats(owner) {
     active: count((s) => !["stopped", "failed"].includes(displayStatus(s))),
     failed,
     failure_rate: ended ? Math.round((failed / ended) * 10000) / 10000 : 0,
+    total_cost_usd: Math.round(mine.reduce((sum, s) => sum + s.cost_usd, 0) * 10000) / 10000,
+    cost_complete: mine.every((s) => s.cost_complete !== false),
   };
 }
 

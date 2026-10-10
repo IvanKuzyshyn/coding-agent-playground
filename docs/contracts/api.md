@@ -105,7 +105,9 @@ failures and lost sandboxes end as `failed`.
   "running": 2,         // status running (a turn is executing)
   "active": 5,          // not terminal (pending, provisioning, idle, running, stopping)
   "failed": 3,          // status failed
-  "failure_rate": 0.0769 // failed / ended sessions (complete + failed + stopped); 0 when none ended
+  "failure_rate": 0.0769, // failed / ended sessions (complete + failed + stopped); 0 when none ended
+  "total_cost_usd": 12.34, // sum of sessions' cost_usd (API-equivalent estimate)
+  "cost_complete": true    // false if any session used an unpriced model (total is a lower bound)
 }
 
 // Turn

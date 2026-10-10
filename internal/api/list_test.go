@@ -115,8 +115,17 @@ func TestStats(t *testing.T) {
 	if _, err := e.st.Pool().Exec(context.Background(), `UPDATE sessions SET status = 'failed', error = 'boom' WHERE id = $1`, bad); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := e.st.AddUsage(context.Background(), ok, 100, 0.25, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.st.AddUsage(context.Background(), bad, 100, 0.5, true); err != nil {
+		t.Fatal(err)
+	}
 	_, body := e.do(t, http.MethodGet, "/stats", alice, nil)
-	want := map[string]float64{"total": 3, "running": 1, "active": 1, "failed": 1, "failure_rate": 0.5}
+	if body["cost_complete"] != true {
+		t.Errorf("cost_complete: %v", body["cost_complete"])
+	}
+	want := map[string]float64{"total": 3, "running": 1, "active": 1, "failed": 1, "failure_rate": 0.5, "total_cost_usd": 0.75}
 	for k, v := range want {
 		if body[k] != v {
 			t.Errorf("%s: got %v want %v", k, body[k], v)

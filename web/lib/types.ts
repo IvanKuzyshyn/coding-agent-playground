@@ -104,6 +104,8 @@ export interface Stats {
   active: number;
   failed: number;
   failure_rate: number;
+  total_cost_usd: number;
+  cost_complete: boolean;
 }
 
 export interface EgressPayload {
