@@ -5,6 +5,7 @@ import { RelTime } from "@/components/rel-time";
 import { StatusBadge } from "@/components/status-badge";
 import { TokenBar } from "@/components/token-bar";
 import { ApiError, getSession } from "@/lib/api";
+import { TERMINAL_SESSION } from "@/lib/types";
 import { SessionLive } from "./session-live";
 
 export default async function SessionPage({ params }: PageProps<"/sessions/[id]">) {
@@ -16,6 +17,7 @@ export default async function SessionPage({ params }: PageProps<"/sessions/[id]"
     if (e instanceof ApiError && e.status === 404) notFound();
     throw e;
   }
+  const live = !TERMINAL_SESSION.includes(session.status);
 
   return (
     <div className="flex flex-col gap-3">
@@ -36,10 +38,8 @@ export default async function SessionPage({ params }: PageProps<"/sessions/[id]"
           <Field label="created">
             <RelTime iso={session.created_at} />
           </Field>
-          <Field label="expires">
-            <RelTime iso={session.expires_at} />
-          </Field>
-          <Field label="idle until">{session.idle_until ? <RelTime iso={session.idle_until} /> : "–"}</Field>
+          <Field label="expires">{live ? <RelTime iso={session.expires_at} /> : "–"}</Field>
+          <Field label="idle until">{live && session.idle_until ? <RelTime iso={session.idle_until} /> : "–"}</Field>
           <Field label="ended">{session.ended_at ? <RelTime iso={session.ended_at} /> : "–"}</Field>
         </dl>
         <div className="flex items-center gap-2">

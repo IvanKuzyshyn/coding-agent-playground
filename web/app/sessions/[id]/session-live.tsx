@@ -6,7 +6,7 @@ import { deleteSession, followUp, stopTurn, type ActionState } from "@/app/actio
 import { StatusBadge } from "@/components/status-badge";
 import { formatTokens } from "@/lib/format";
 import { TERMINAL_SESSION, type EgressPayload, type Session, type SessionEvent, type Turn } from "@/lib/types";
-import { EventItem } from "./event-item";
+import { EventItem, egressReason } from "./event-item";
 
 const KINDS = ["lifecycle", "harness", "stderr", "egress", "system", "message"];
 type Conn = "connecting" | "live" | "reconnecting" | "ended";
@@ -92,6 +92,7 @@ export function SessionLive({ session }: { session: Session }) {
     }
     return s;
   }, [events]);
+  const repeatedResults = useMemo(() => findRepeatedResults(events), [events]);
 
   useFollowTail(events.length);
 
@@ -142,20 +143,34 @@ export function SessionLive({ session }: { session: Session }) {
               {tEvents.length === 0 ? (
                 <p className="px-1 py-1 font-mono text-xs text-muted">no events yet</p>
               ) : (
-                tEvents.map((ev) => <EventItem key={ev.id} ev={ev} completedItems={completedItems} />)
+                tEvents.map((ev) => (
+                  <EventItem
+                    key={ev.id}
+                    ev={ev}
+                    completedItems={completedItems}
+                    hideResultText={repeatedResults.has(ev.id)}
+                  />
+                ))
               )}
             </div>
             {turn?.error && (
-              <p className="border-t border-line px-3 py-1.5 font-mono text-xs text-red-300">{turn.error}</p>
+              <p className={`border-t border-line px-3 py-1.5 font-mono text-xs ${TURN_ERROR_CLASS[turn.status] ?? "text-muted"}`}>
+                {turn.error}
+              </p>
             )}
           </section>
         ))}
 
-        <FollowUp sessionId={session.id} disabled={closed} running={running || session.current_turn !== undefined} />
+        <FollowUp
+          sessionId={session.id}
+          disabled={closed}
+          running={running || session.current_turn !== undefined}
+          stateKey={`${session.status}|${session.current_turn ?? ""}`}
+        />
       </div>
 
       <aside className="order-1 flex flex-col gap-3 lg:order-2">
-        <Controls sessionId={session.id} running={running} closed={closed} />
+        <Controls sessionId={session.id} status={session.status} running={running} />
         <EgressPanel denied={denied} allowedCount={allowedCount} />
       </aside>
     </div>
@@ -172,6 +187,33 @@ function groupTurns(turns: Turn[], events: SessionEvent[]) {
     g.events.push(e);
   }
   return [...map.values()].sort((a, b) => a.seq - b.seq);
+}
+
+const TURN_ERROR_CLASS: Partial<Record<Turn["status"], string>> = {
+  failed: "text-red-300",
+  limit_exceeded: "text-amber-300",
+};
+
+// Claude's `result` repeats the last assistant text; return the result events whose text was
+// already shown by an assistant event in the same turn.
+function findRepeatedResults(events: SessionEvent[]) {
+  const withText = new Set<number>();
+  const repeated = new Set<number>();
+  for (const e of events) {
+    if (e.kind !== "harness" || e.payload.harness !== "claude-code") continue;
+    const turn = e.turn_seq ?? 0;
+    const ev = (e.payload.event ?? {}) as { type?: string; message?: { content?: unknown } };
+    if (ev.type === "assistant") {
+      const content = ev.message?.content;
+      const hasText =
+        typeof content === "string" ||
+        (Array.isArray(content) && content.some((b) => (b as { type?: string })?.type === "text"));
+      if (hasText) withText.add(turn);
+    } else if (ev.type === "result" && withText.has(turn)) {
+      repeated.add(e.id);
+    }
+  }
+  return repeated;
 }
 
 // Keep the newest events in view while the engineer is already at the bottom of the page.
@@ -200,14 +242,30 @@ function Msg({ state }: { state: ActionState }) {
   return null;
 }
 
-function Controls({ sessionId, running, closed }: { sessionId: string; running: boolean; closed: boolean }) {
+// An action's message describes the session as it was when the action returned; drop it once the
+// session state (`stateKey`) moves on.
+function useCurrentMessage(state: ActionState, stateKey: string): ActionState {
+  const [pinned, setPinned] = useState({ state, stateKey });
+  if (pinned.state !== state) {
+    setPinned({ state, stateKey });
+    return state;
+  }
+  return pinned.stateKey === stateKey ? state : {};
+}
+
+function Controls({ sessionId, status, running }: { sessionId: string; status: Session["status"]; running: boolean }) {
   const [stopState, stopAction, stopping] = useActionState(stopTurn, {});
   const [delState, delAction, deleting] = useActionState(deleteSession, {});
+  const [last, setLast] = useState<"stop" | "delete">();
+  const stateKey = `${status}|${running}`;
+  const stopMsg = useCurrentMessage(stopState, stateKey);
+  const delMsg = useCurrentMessage(delState, stateKey);
+  const closed = TERMINAL_SESSION.includes(status);
   return (
     <div className="flex flex-col gap-2 rounded border border-line bg-panel p-3">
       <div className="flex flex-wrap gap-2">
         {running && (
-          <form action={stopAction}>
+          <form action={stopAction} onSubmit={() => setLast("stop")}>
             <input type="hidden" name="id" value={sessionId} />
             <button
               disabled={stopping}
@@ -222,6 +280,7 @@ function Controls({ sessionId, running, closed }: { sessionId: string; running: 
             action={delAction}
             onSubmit={(e) => {
               if (!confirm("Delete this session and destroy its sandbox?")) e.preventDefault();
+              else setLast("delete");
             }}
           >
             <input type="hidden" name="id" value={sessionId} />
@@ -233,10 +292,14 @@ function Controls({ sessionId, running, closed }: { sessionId: string; running: 
             </button>
           </form>
         )}
-        {closed && <span className="text-xs text-muted">Session is closed.</span>}
+        {closed && (
+          <span className="text-xs text-muted">{status === "stopping" ? "Session stopping…" : "Session is closed."}</span>
+        )}
       </div>
-      <Msg state={stopState} />
-      <Msg state={delState} />
+      {!closed && (
+        // "Stop requested." is moot once the turn has stopped; errors stay until the state moves on.
+        <Msg state={last === "stop" ? (running || stopMsg.error ? stopMsg : {}) : last === "delete" ? delMsg : {}} />
+      )}
     </div>
   );
 }
@@ -269,7 +332,7 @@ function EgressPanel({ denied, allowedCount }: { denied: SessionEvent[]; allowed
                   <div className="text-muted">
                     {p.via} {p.method} {p.path}
                   </div>
-                  {p.reason && <div className="text-muted/80">{p.reason}</div>}
+                  {p.reason && <div className="text-muted/80">{egressReason(p.reason)}</div>}
                 </li>
               );
             })}
@@ -280,8 +343,19 @@ function EgressPanel({ denied, allowedCount }: { denied: SessionEvent[]; allowed
   );
 }
 
-function FollowUp({ sessionId, disabled, running }: { sessionId: string; disabled: boolean; running: boolean }) {
+function FollowUp({
+  sessionId,
+  disabled,
+  running,
+  stateKey,
+}: {
+  sessionId: string;
+  disabled: boolean;
+  running: boolean;
+  stateKey: string;
+}) {
   const [state, action, pending] = useActionState(followUp, {});
+  const msg = useCurrentMessage(state, stateKey);
   const formRef = useRef<HTMLFormElement>(null);
   useEffect(() => {
     if (state.ok) formRef.current?.reset();
@@ -314,7 +388,7 @@ function FollowUp({ sessionId, disabled, running }: { sessionId: string; disable
       </div>
       <div className="flex gap-3">
         {running && !disabled && <p className="text-xs text-sky-300">A turn is running; this prompt will be queued.</p>}
-        <Msg state={state} />
+        {!disabled && <Msg state={msg} />}
       </div>
     </form>
   );

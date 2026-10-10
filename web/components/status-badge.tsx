@@ -8,7 +8,7 @@ const COLORS: Record<string, string> = {
   stopping: "text-orange-300 border-orange-500/50 bg-orange-500/10",
   stopped: "text-zinc-400 border-zinc-600/60 bg-zinc-600/10",
   failed: "text-red-300 border-red-500/60 bg-red-500/15",
-  limit_exceeded: "text-red-300 border-red-500/60 bg-red-500/15",
+  limit_exceeded: "text-amber-300 border-amber-500/50 bg-amber-500/10",
 };
 
 export function StatusBadge({ status }: { status: string }) {

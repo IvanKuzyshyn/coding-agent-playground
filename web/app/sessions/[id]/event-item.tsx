@@ -53,11 +53,19 @@ function Text({ children }: { children: string }) {
   return <p className="whitespace-pre-wrap break-words text-fg">{children}</p>;
 }
 
-function usageLine(u: Obj): string {
+// Normalised like the API's turn usage so the event and the turn header agree: "in" is uncached
+// input (Claude reports cache writes separately; Codex includes cache reads in input_tokens).
+function usageLine(u: Obj, harness: "claude-code" | "codex"): string {
   const parts: string[] = [];
-  const inT = num(u.input_tokens);
+  const raw = num(u.input_tokens);
   const outT = num(u.output_tokens);
-  const cached = num(u.cached_input_tokens) ?? num(u.cache_read_input_tokens);
+  const cached = harness === "codex" ? num(u.cached_input_tokens) : num(u.cache_read_input_tokens);
+  const inT =
+    raw === undefined
+      ? undefined
+      : harness === "codex"
+        ? raw - (cached ?? 0)
+        : raw + (num(u.cache_creation_input_tokens) ?? 0);
   if (inT !== undefined) parts.push(`in ${formatTokens(inT)}`);
   if (cached !== undefined) parts.push(`cached ${formatTokens(cached)}`);
   if (outT !== undefined) parts.push(`out ${formatTokens(outT)}`);
@@ -78,7 +86,7 @@ function toolResultText(content: unknown): string {
   return JSON.stringify(content, null, 2);
 }
 
-function ClaudeEvent({ ev, e }: { ev: SessionEvent; e: Obj }) {
+function ClaudeEvent({ ev, e, hideResultText }: { ev: SessionEvent; e: Obj; hideResultText: boolean }) {
   const type = str(e.type);
   if (type === "system") {
     const sub = str(e.subtype);
@@ -150,11 +158,28 @@ function ClaudeEvent({ ev, e }: { ev: SessionEvent; e: Obj }) {
           <div className="mb-1 flex flex-wrap gap-x-3 font-mono text-[11px] text-muted">
             <span className={isErr ? "text-red-300" : "text-emerald-300"}>{str(e.subtype) || "result"}</span>
             {num(e.num_turns) !== undefined && <span>{num(e.num_turns)} steps</span>}
-            <span>{usageLine(obj(e.usage))}</span>
+            <span>{usageLine(obj(e.usage), "claude-code")}</span>
             {cost !== undefined && <span title="Client-side estimate; not billed on a subscription">${cost.toFixed(3)} API-equiv</span>}
           </div>
-          {str(e.result) && <Text>{str(e.result)}</Text>}
+          {str(e.result) && (isErr || !hideResultText) && <Text>{str(e.result)}</Text>}
         </div>
+      </Row>
+    );
+  }
+  if (type === "rate_limit_event") {
+    // Emitted on every request; only worth showing once a limit actually bites.
+    const info = obj(e.rate_limit_info);
+    const status = str(info.status);
+    if (!status || status === "allowed") return null;
+    const resets = num(info.resetsAt);
+    return (
+      <Row ev={ev} tag="limit" tagClass="text-amber-300">
+        <p className="rounded border border-amber-500/40 bg-amber-500/10 px-2 py-1 font-mono text-xs text-amber-200">
+          Rate limit {status === "rejected" ? "hit" : "warning"}
+          {info.rateLimitType ? ` (${str(info.rateLimitType)})` : ""}
+          {resets !== undefined ? ` · resets ${time(new Date(resets * 1000).toISOString())}` : ""}
+          <span className="text-amber-200/60"> · {status}</span>
+        </p>
       </Row>
     );
   }
@@ -179,7 +204,7 @@ function CodexEvent({ ev, e, completedItems }: { ev: SessionEvent; e: Obj; compl
   if (type === "turn.completed") {
     return (
       <Row ev={ev} tag="done" tagClass="text-emerald-300">
-        <span className="font-mono text-xs text-muted">turn.completed · {usageLine(obj(e.usage))}</span>
+        <span className="font-mono text-xs text-muted">turn.completed · {usageLine(obj(e.usage), "codex")}</span>
       </Row>
     );
   }
@@ -256,13 +281,37 @@ function CodexEvent({ ev, e, completedItems }: { ev: SessionEvent; e: Obj; compl
   return <Unknown ev={ev} label={`codex ${type}${itemType ? ` ${itemType}` : ""}`} />;
 }
 
-export function EventItem({ ev, completedItems }: { ev: SessionEvent; completedItems: Set<string> }) {
+// Reason codes set by the gateway (internal/gateway) on denied egress.
+const EGRESS_REASONS: Record<string, string> = {
+  host: "host not allowlisted",
+  port: "port not allowed",
+  method: "method not allowed",
+  status: "session not active",
+  route: "unknown route",
+  harness: "route not allowed for this harness",
+  budget: "budget exhausted",
+};
+
+export function egressReason(reason: unknown): string {
+  const r = str(reason);
+  return EGRESS_REASONS[r] ?? r;
+}
+
+export function EventItem({
+  ev,
+  completedItems,
+  hideResultText = false,
+}: {
+  ev: SessionEvent;
+  completedItems: Set<string>;
+  hideResultText?: boolean;
+}) {
   const p = obj(ev.payload);
   switch (ev.kind) {
     case "harness": {
       const e = obj(p.event);
       if (p.harness === "codex") return <CodexEvent ev={ev} e={e} completedItems={completedItems} />;
-      if (p.harness === "claude-code") return <ClaudeEvent ev={ev} e={e} />;
+      if (p.harness === "claude-code") return <ClaudeEvent ev={ev} e={e} hideResultText={hideResultText} />;
       return <Unknown ev={ev} />;
     }
     case "lifecycle": {
@@ -293,7 +342,7 @@ export function EventItem({ ev, completedItems }: { ev: SessionEvent; completedI
         <Row ev={ev} tag="egress" tagClass={denied ? "text-red-400" : "text-muted"}>
           <span className={`font-mono text-xs break-all ${denied ? "text-red-300" : "text-muted"}`}>
             {str(p.decision)} {str(p.method)} {str(p.host)}
-            {str(p.path)} {p.reason ? `(${str(p.reason)})` : ""}
+            {str(p.path)} {p.reason ? `(${egressReason(p.reason)})` : ""}
           </span>
         </Row>
       );
