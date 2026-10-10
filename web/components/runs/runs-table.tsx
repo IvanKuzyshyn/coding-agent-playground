@@ -62,6 +62,9 @@ export function RunsTable({ sessions, query, update, open, hrefFor, activeId }: 
               {sortHeader("created_at", "When", "w-36")}
               {sortHeader("status", "Status", "w-32")}
               {sortHeader("name", "Run")}
+              <th scope="col" className="w-32 px-3 py-2 font-medium tracking-widest uppercase">
+                Owner
+              </th>
               <th scope="col" className="w-20 px-3 py-2 font-medium tracking-widest uppercase">
                 Harness
               </th>
@@ -90,6 +93,9 @@ export function RunsTable({ sessions, query, update, open, hrefFor, activeId }: 
                 </td>
                 <td className="max-w-0 px-3 py-2.5 align-middle">
                   <RunName s={s} href={hrefFor(s.id)} onClick={(e) => onLink(e, s.id)} />
+                </td>
+                <td className="max-w-0 truncate px-3 py-2.5 align-middle font-mono text-xs text-muted" title={s.owner}>
+                  {s.owner}
                 </td>
                 <td className="px-3 py-2.5 align-middle">
                   <HarnessIcon harness={s.harness} />
@@ -128,6 +134,7 @@ export function RunsTable({ sessions, query, update, open, hrefFor, activeId }: 
               <Meta>
                 <LiveDuration session={s} />
               </Meta>
+              <Meta>{s.owner}</Meta>
             </div>
             <Cost session={s} />
           </li>

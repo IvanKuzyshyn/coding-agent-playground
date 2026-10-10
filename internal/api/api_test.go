@@ -175,7 +175,8 @@ func TestCreateValidates(t *testing.T) {
 	}
 }
 
-func TestOtherEngineersSessionIsNotFound(t *testing.T) {
+// Everyone can read every session; only the user who started one can change it.
+func TestOtherUsersSessionIsReadOnly(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t, 10*time.Millisecond)
 	id := e.create(t, alice)
@@ -183,15 +184,16 @@ func TestOtherEngineersSessionIsNotFound(t *testing.T) {
 	for _, tc := range []struct {
 		method, path string
 		body         any
+		want         int
 	}{
-		{http.MethodGet, p, nil},
-		{http.MethodDelete, p, nil},
-		{http.MethodPost, p + "/turns", map[string]string{"prompt": "x"}},
-		{http.MethodPost, p + "/turns/current/stop", nil},
-		{http.MethodGet, p + "/events", nil},
+		{http.MethodGet, p, nil, http.StatusOK},
+		{http.MethodGet, p + "/events", nil, http.StatusOK},
+		{http.MethodDelete, p, nil, http.StatusForbidden},
+		{http.MethodPost, p + "/turns", map[string]string{"prompt": "x"}, http.StatusForbidden},
+		{http.MethodPost, p + "/turns/current/stop", nil, http.StatusForbidden},
 	} {
-		if code, _ := e.do(t, tc.method, tc.path, bob, tc.body); code != http.StatusNotFound {
-			t.Errorf("bob %s %s: %d", tc.method, tc.path, code)
+		if code, _ := e.do(t, tc.method, tc.path, bob, tc.body); code != tc.want {
+			t.Errorf("bob %s %s: %d want %d", tc.method, tc.path, code, tc.want)
 		}
 	}
 	if code, _ := e.do(t, http.MethodGet, "/sessions/not-a-uuid", alice, nil); code != http.StatusNotFound {
@@ -200,8 +202,11 @@ func TestOtherEngineersSessionIsNotFound(t *testing.T) {
 	if code, _ := e.do(t, http.MethodGet, "/sessions/"+uuid.NewString(), alice, nil); code != http.StatusNotFound {
 		t.Errorf("unknown id: %d", code)
 	}
-	if code, body := e.do(t, http.MethodGet, "/sessions", bob, nil); code != http.StatusOK || len(body["sessions"].([]any)) != 0 {
-		t.Errorf("bob's list: %d %v", code, body)
+	if code, body := e.do(t, http.MethodGet, "/sessions", bob, nil); code != http.StatusOK || len(body["sessions"].([]any)) != 1 {
+		t.Errorf("bob's list should include alice's session: %d %v", code, body)
+	}
+	if _, body := e.do(t, http.MethodGet, "/sessions?owner=bob", bob, nil); body["total"] != float64(0) {
+		t.Errorf("owner filter: %v", body)
 	}
 	if st := testutil.MustSession(t, e.st, id).Status; st != session.StatusPending {
 		t.Errorf("bob's DELETE changed alice's session: %q", st)

@@ -70,11 +70,15 @@ func TestListFilterSortPaginate(t *testing.T) {
 	if _, err := e.st.Pool().Exec(context.Background(), `UPDATE sessions SET status = 'failed', error = 'boom' WHERE id = $1`, failed); err != nil {
 		t.Fatal(err)
 	}
-	e.createNamed(t, bob, "fix bob's thing", "codex") // other owner, never listed
+	e.createNamed(t, bob, "fix bob's thing", "codex")
 
 	code, body := e.do(t, http.MethodGet, "/sessions?q=FIX", alice, nil)
-	if code != http.StatusOK || body["total"].(float64) != 2 {
-		t.Fatalf("search: %d %v", code, body)
+	if code != http.StatusOK || body["total"].(float64) != 3 {
+		t.Fatalf("search across users: %d %v", code, body)
+	}
+	_, body = e.do(t, http.MethodGet, "/sessions?q=FIX&owner=alice", alice, nil)
+	if body["total"].(float64) != 2 {
+		t.Errorf("search with owner: %v", body["total"])
 	}
 	_, body = e.do(t, http.MethodGet, "/sessions?harness=claude-code&sort=name&order=asc", alice, nil)
 	if got := names(body); len(got) != 2 || got[0] != "fix login bug" || got[1] != "Refactor store" {
@@ -88,7 +92,7 @@ func TestListFilterSortPaginate(t *testing.T) {
 	if body["total"].(float64) != 2 {
 		t.Errorf("stopped excludes failed: %v", body["total"])
 	}
-	_, body = e.do(t, http.MethodGet, "/sessions?limit=2&offset=2&sort=created_at&order=asc", alice, nil)
+	_, body = e.do(t, http.MethodGet, "/sessions?owner=alice&limit=2&offset=2&sort=created_at&order=asc", alice, nil)
 	if got := names(body); len(got) != 1 || got[0] != "Refactor store" || body["total"].(float64) != 3 {
 		t.Errorf("pagination: %v total %v", got, body["total"])
 	}
@@ -131,7 +135,17 @@ func TestStats(t *testing.T) {
 			t.Errorf("%s: got %v want %v", k, body[k], v)
 		}
 	}
-	if _, body := e.do(t, http.MethodGet, "/stats", bob, nil); body["total"] != float64(0) {
-		t.Errorf("stats leak across owners: %v", body)
+	// Stats follow the listing filters.
+	if _, body := e.do(t, http.MethodGet, "/stats", bob, nil); body["total"] != float64(3) {
+		t.Errorf("stats for everyone: %v", body)
+	}
+	if _, body := e.do(t, http.MethodGet, "/stats?owner=bob", bob, nil); body["total"] != float64(0) {
+		t.Errorf("stats for bob: %v", body)
+	}
+	if _, body := e.do(t, http.MethodGet, "/stats?status=failed&harness=codex", alice, nil); body["total"] != float64(1) || body["failed"] != float64(1) {
+		t.Errorf("stats with status and harness filters: %v", body)
+	}
+	if code, _ := e.do(t, http.MethodGet, "/stats?status=bogus", alice, nil); code != http.StatusBadRequest {
+		t.Errorf("stats with a bad filter: %d", code)
 	}
 }

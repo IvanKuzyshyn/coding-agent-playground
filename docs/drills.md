@@ -16,4 +16,4 @@ Codex 0.162.1). The automated equivalents are in `internal/ops`, `internal/super
 | 8 | Subscription quota exhausted | Real ChatGPT Plus account at its usage limit | Turn `failed` with the vendor's message ("You've hit your usage limit … try again at …"), session stays `idle` and usable |
 | 9 | Sandbox calls the control-plane API | `curl http://server:8080/healthz` from a sandbox | `403` (source subnet refused) |
 | 10 | Codex end to end | Two Codex turns on a cloned repo, then follow-ups | Turn 2 resumed the thread (`41`); gateway token count per turn equals the turn's reported usage (408 = 403 + 5) |
-| 11 | Unknown engineer / other engineer's session | Requests without token, with another engineer's token | `401` / `404` (API tests) |
+| 11 | Unknown user / other user's session | Requests without token; changes with another user's token | `401` / `403`, reads allowed (API tests) |

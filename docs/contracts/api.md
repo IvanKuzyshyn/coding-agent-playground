@@ -4,8 +4,10 @@ Base URL: `http://127.0.0.1:8080`. JSON in and out. Errors: `{"error": "<message
 status.
 
 **Auth:** every endpoint except `/healthz` and `/login` requires `Authorization: Bearer <token>`,
-the user's token from `POST /login`. Missing or unknown token → `401`. A session owned by someone else behaves
-as if it does not exist (`404`).
+the user's token from `POST /login`. Missing or unknown token → `401`. Every user can list and read
+every session (`GET /sessions`, `/sessions/{id}`, `/events`, `/stats`); only the session's owner (the
+user who created it) can change it: `DELETE`, follow-up turns and stopping a turn by anyone else →
+`403`.
 
 The same operations are available as MCP tools at `POST /mcp`; see [mcp.md](mcp.md).
 
@@ -19,7 +21,7 @@ The same operations are available as MCP tools at `POST /mcp`; see [mcp.md](mcp.
 | `GET` | `/presets` | – | `200 {"presets":[{"name":"default"},{"name":"explore"}]}` |
 | `POST` | `/sessions` | `{"name":"...", "harness":"claude-code"\|"codex", "prompt":"...", "repo":"owner/name"?, "preset":"default"?, "model":"..."?, "keep_idle":false?}` | `202 Session` |
 | `GET` | `/sessions` | query: see [Listing](#listing) | `200 {"sessions":[Session], "total": <matching count>}` without `turns` |
-| `GET` | `/stats` | – | `200 Stats` for the caller's sessions |
+| `GET` | `/stats` | query: the filters of [Listing](#listing) (`q`, `owner`, `status`, `harness`; sort and paging ignored) | `200 Stats` for the matching sessions |
 | `GET` | `/sessions/{id}` | – | `200 Session` with `turns` |
 | `POST` | `/sessions/{id}/turns` | `{"prompt":"..."}` | `202 Turn` (status `queued`); `409` if the session is not `pending`/`provisioning`/`idle`/`running` |
 | `POST` | `/sessions/{id}/turns/current/stop` | – | `202 {}`; `409` if no turn is running |
@@ -42,6 +44,7 @@ by `id` only). `prompt` non-empty, ≤ 100 KB. `repo` is `owner/name` (public Gi
 | Param | Values | Default |
 |---|---|---|
 | `q` | case-insensitive substring of `name` | – |
+| `owner` | user name; only that user's sessions | every user |
 | `status` | comma-separated statuses: `pending`, `provisioning`, `idle`, `running`, `stopping`, `complete`, `failed`, `stopped` | all |
 | `harness` | comma-separated `claude-code`, `codex` | all |
 | `sort` | `created_at`, `duration`, `cost`, `tokens`, `name`, `status` (lifecycle order: pending, provisioning, idle, running, stopping, complete, stopped, failed) | `created_at` |
@@ -108,7 +111,7 @@ failures and lost sandboxes end as `failed`.
   "turns": [Turn]                  // only on GET /sessions/{id}
 }
 
-// Stats (caller's sessions)
+// Stats (sessions matching the filters)
 {
   "total": 39,          // all sessions ever created
   "running": 2,         // status running (a turn is executing)

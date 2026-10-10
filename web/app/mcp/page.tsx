@@ -12,7 +12,7 @@ const TOOLS: [string, string][] = [
   ["create_session", "start an agent in a fresh sandbox"],
   ["wait_for_session", "block until it finishes a turn or ends"],
   ["get_session", "status, cost, turns and results"],
-  ["list_sessions", "your sessions, filtered by status, harness or name"],
+  ["list_sessions", "all sessions, filtered by owner, status, harness or name"],
   ["send_follow_up", "queue another prompt (sessions created with keep_idle)"],
   ["terminate_session", "end it and destroy the sandbox"],
 ];

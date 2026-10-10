@@ -2,6 +2,7 @@
 
 import { useRouter, useSearchParams } from "next/navigation";
 import { useMemo, useOptimistic, useTransition } from "react";
+import { CurrentUserContext } from "@/components/current-user";
 import { SessionDrawer } from "@/components/session/session-drawer";
 import { PAGE_SIZE, parseQuery, uiHref, type RunsQuery } from "@/lib/query";
 import type { Session, SessionList } from "@/lib/types";
@@ -9,10 +10,12 @@ import { RunsTable } from "./runs-table";
 import { Toolbar } from "./toolbar";
 
 export function RunsView({
+  user,
   list,
   openSession,
   openError,
 }: {
+  user: string;
   list: SessionList;
   openSession: Session | null;
   openError: string | null;
@@ -43,10 +46,10 @@ export function RunsView({
   const offset = (urlQuery.page - 1) * PAGE_SIZE;
   const first = list.sessions.length === 0 ? 0 : offset + 1;
   const last = list.sessions.length === 0 ? 0 : offset + list.sessions.length;
-  const filtered = query.q !== "" || query.status.length > 0 || query.harness.length > 0;
+  const filtered = query.q !== "" || query.status.length > 0 || query.harness.length > 0 || query.mine;
 
   return (
-    <>
+    <CurrentUserContext value={user}>
       <Toolbar query={query} update={update} pending={pending} />
       <RunsTable sessions={list.sessions} query={query} update={update} open={open} hrefFor={hrefFor} activeId={openId} />
       {list.sessions.length === 0 && (
@@ -78,6 +81,6 @@ export function RunsView({
         </div>
       </nav>
       <SessionDrawer openId={openId} session={drawerSession} error={drawerError} onClose={close} />
-    </>
+    </CurrentUserContext>
   );
 }

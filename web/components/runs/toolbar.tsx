@@ -34,6 +34,20 @@ export function Toolbar({
         render={(v) => HARNESS_LABELS[v]}
         onChange={(harness) => update({ harness })}
       />
+      <button
+        type="button"
+        aria-pressed={query.mine}
+        onClick={() => update({ mine: !query.mine })}
+        className={`flex h-9 items-center gap-1.5 rounded-md border px-2.5 text-sm ${
+          query.mine ? "border-accent bg-accent/10 text-fg" : "border-line bg-panel text-muted hover:text-fg"
+        }`}
+      >
+        <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.3" aria-hidden>
+          <circle cx="8" cy="5.5" r="2.5" />
+          <path d="M3 13.5c.6-2.5 2.6-4 5-4s4.4 1.5 5 4" strokeLinecap="round" />
+        </svg>
+        Only mine
+      </button>
       <div className="ml-auto flex items-center gap-2">
         <span aria-live="polite" className="w-4 text-muted">
           {pending && <span className="block h-3 w-3 animate-spin rounded-full border border-muted border-t-transparent" aria-label="Loading" />}

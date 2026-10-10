@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -170,22 +171,20 @@ var (
 	harnesses       = map[string]bool{"claude-code": true, "codex": true}
 )
 
-func (s *Server) listSessions(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
-	f := store.ListFilter{Owner: owner(r.Context()), Query: q.Get("q"), Sort: "created_at", Desc: true, Limit: 50}
+// listFilter parses the listing parameters /sessions and /stats share. Sessions of every user
+// are included unless owner is given.
+func listFilter(q url.Values) (store.ListFilter, error) {
+	f := store.ListFilter{Owner: q.Get("owner"), Query: q.Get("q"), Sort: "created_at", Desc: true, Limit: 50}
 	var bad string
 	if f.Statuses, bad = csvParam(q.Get("status"), displayStatuses); bad != "" {
-		writeError(w, http.StatusBadRequest, "unknown status "+strconv.Quote(bad))
-		return
+		return f, badRequest("unknown status " + strconv.Quote(bad))
 	}
 	if f.Harnesses, bad = csvParam(q.Get("harness"), harnesses); bad != "" {
-		writeError(w, http.StatusBadRequest, "unknown harness "+strconv.Quote(bad))
-		return
+		return f, badRequest("unknown harness " + strconv.Quote(bad))
 	}
 	if v := q.Get("sort"); v != "" {
 		if !store.ValidSort(v) {
-			writeError(w, http.StatusBadRequest, "unknown sort "+strconv.Quote(v))
-			return
+			return f, badRequest("unknown sort " + strconv.Quote(v))
 		}
 		f.Sort = v
 	}
@@ -194,16 +193,22 @@ func (s *Server) listSessions(w http.ResponseWriter, r *http.Request) {
 	case "asc":
 		f.Desc = false
 	default:
-		writeError(w, http.StatusBadRequest, "order must be asc or desc")
-		return
+		return f, badRequest("order must be asc or desc")
 	}
 	var err error
 	if f.Limit, err = intParam(q.Get("limit"), 50, 1, 200); err != nil {
-		writeError(w, http.StatusBadRequest, "limit: "+err.Error())
-		return
+		return f, badRequest("limit: " + err.Error())
 	}
 	if f.Offset, err = intParam(q.Get("offset"), 0, 0, 1<<30); err != nil {
-		writeError(w, http.StatusBadRequest, "offset: "+err.Error())
+		return f, badRequest("offset: " + err.Error())
+	}
+	return f, nil
+}
+
+func (s *Server) listSessions(w http.ResponseWriter, r *http.Request) {
+	f, err := listFilter(r.URL.Query())
+	if err != nil {
+		s.fail(w, err)
 		return
 	}
 	list, total, err := s.Store.ListSessions(r.Context(), f)
@@ -219,7 +224,12 @@ func (s *Server) listSessions(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) stats(w http.ResponseWriter, r *http.Request) {
-	st, err := s.Store.Stats(r.Context(), owner(r.Context()))
+	f, err := listFilter(r.URL.Query())
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	st, err := s.Store.Stats(r.Context(), f)
 	if err != nil {
 		s.internal(w, err)
 		return
@@ -255,7 +265,7 @@ func intParam(v string, def, lo, hi int) (int, error) {
 }
 
 func (s *Server) getSession(w http.ResponseWriter, r *http.Request) {
-	id, ok := s.ownedID(w, r)
+	id, ok := s.visibleID(w, r)
 	if !ok {
 		return
 	}
@@ -328,7 +338,17 @@ func (s *Server) stopTurn(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusAccepted, struct{}{})
 }
 
-// ownedID parses the path id and hides sessions owned by someone else behind a 404.
+// visibleID parses the path id of a session to read. Every user can read every session.
+func (s *Server) visibleID(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
+	ss, err := s.find(r.Context(), r.PathValue("id"))
+	if err != nil {
+		s.fail(w, err)
+		return uuid.Nil, false
+	}
+	return ss.ID, true
+}
+
+// ownedID parses the path id of a session to change; only its owner may.
 func (s *Server) ownedID(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
 	ss, err := s.owned(r.Context(), owner(r.Context()), r.PathValue("id"))
 	if err != nil {
@@ -338,14 +358,23 @@ func (s *Server) ownedID(w http.ResponseWriter, r *http.Request) (uuid.UUID, boo
 	return ss.ID, true
 }
 
-func (s *Server) owned(ctx context.Context, who, rawID string) (store.Session, error) {
+func (s *Server) find(ctx context.Context, rawID string) (store.Session, error) {
 	id, err := uuid.Parse(rawID)
 	if err != nil {
 		return store.Session{}, errSessionNotFound
 	}
 	ss, err := s.Store.GetSession(ctx, id)
-	if errors.Is(err, store.ErrNotFound) || (err == nil && ss.Owner != who) {
+	if errors.Is(err, store.ErrNotFound) {
 		return store.Session{}, errSessionNotFound
+	}
+	return ss, err
+}
+
+// owned returns the session if who started it; others may read it but not change it.
+func (s *Server) owned(ctx context.Context, who, rawID string) (store.Session, error) {
+	ss, err := s.find(ctx, rawID)
+	if err == nil && ss.Owner != who {
+		return store.Session{}, &clientError{http.StatusForbidden, "only " + ss.Owner + ", who started this session, can change it"}
 	}
 	return ss, err
 }

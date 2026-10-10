@@ -268,10 +268,11 @@ function listQuery(params) {
   if (Number.isNaN(limit)) return { error: "limit must be 1-200" };
   const offset = int("offset", 0, 0, Number.MAX_SAFE_INTEGER);
   if (Number.isNaN(offset)) return { error: "offset must be >= 0" };
-  return { q: (params.get("q") ?? "").toLowerCase(), status: status.values, harness: harness.values, sort, order, limit, offset };
+  return { q: (params.get("q") ?? "").toLowerCase(), owner: params.get("owner") ?? "", status: status.values, harness: harness.values, sort, order, limit, offset };
 }
 
 function matches(s, q) {
+  if (q.owner && s.owner !== q.owner) return false;
   if (q.q && !s.name.toLowerCase().includes(q.q)) return false;
   if (q.status.length && !q.status.includes(displayStatus(s))) return false;
   if (q.harness.length && !q.harness.includes(s.harness)) return false;
@@ -298,8 +299,9 @@ function comparator(sort, order) {
   };
 }
 
-function stats(owner) {
-  const mine = [...sessions.values()].filter((s) => s.owner === owner);
+// Every user's sessions matching the listing filters, like the API.
+function stats(q) {
+  const mine = [...sessions.values()].filter((s) => matches(s, q));
   const count = (pred) => mine.filter(pred).length;
   const failed = count((s) => displayStatus(s) === "failed");
   const ended = count((s) => ["stopped", "failed"].includes(displayStatus(s)));
@@ -383,7 +385,11 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "GET" && url.pathname === "/whoami") return send(res, 200, { name: owner });
   if (req.method === "GET" && url.pathname === "/presets") return send(res, 200, { presets: PRESETS });
 
-  if (req.method === "GET" && url.pathname === "/stats") return send(res, 200, stats(owner));
+  if (req.method === "GET" && url.pathname === "/stats") {
+    const q = listQuery(url.searchParams);
+    if (q.error) return fail(res, 400, q.error);
+    return send(res, 200, stats(q));
+  }
 
   if (parts[0] !== "sessions") return fail(res, 404, "not found");
 
@@ -391,7 +397,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "GET") {
       const q = listQuery(url.searchParams);
       if (q.error) return fail(res, 400, q.error);
-      const matching = [...sessions.values()].filter((s) => s.owner === owner && matches(s, q)).sort(comparator(q.sort, q.order));
+      const matching = [...sessions.values()].filter((s) => matches(s, q)).sort(comparator(q.sort, q.order));
       return send(res, 200, {
         sessions: matching.slice(q.offset, q.offset + q.limit).map((s) => view(s, false)),
         total: matching.length,
@@ -410,8 +416,10 @@ const server = http.createServer(async (req, res) => {
   }
 
   const s = sessions.get(parts[1]);
-  if (!s || s.owner !== owner) return fail(res, 404, "session not found");
+  if (!s) return fail(res, 404, "session not found");
   const rest = parts.slice(2).join("/");
+  // Everyone can read every session; only its owner can change it.
+  if (req.method !== "GET" && s.owner !== owner) return fail(res, 403, `only ${s.owner}, who started this session, can change it`);
 
   if (rest === "" && req.method === "GET") return send(res, 200, view(s, true));
   if (rest === "" && req.method === "DELETE") {

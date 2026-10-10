@@ -30,7 +30,7 @@ var sortColumns = map[string]string{
 func ValidSort(key string) bool { _, ok := sortColumns[key]; return ok }
 
 type ListFilter struct {
-	Owner     string
+	Owner     string   // empty: every user's sessions
 	Query     string   // substring of name, case-insensitive
 	Statuses  []string // display statuses
 	Harnesses []string
@@ -40,10 +40,14 @@ type ListFilter struct {
 	Offset    int
 }
 
-// ListSessions returns one page of the owner's sessions matching the filter and the total match count.
-func (s *Store) ListSessions(ctx context.Context, f ListFilter) ([]Session, int, error) {
-	where := []string{"s.owner = $1"}
-	args := []any{f.Owner}
+// where turns the filter's conditions (not sort or paging) into SQL and its arguments.
+func (f ListFilter) where() (string, []any) {
+	where := []string{"true"}
+	var args []any
+	if f.Owner != "" {
+		args = append(args, f.Owner)
+		where = append(where, fmt.Sprintf("s.owner = $%d", len(args)))
+	}
 	if q := strings.TrimSpace(f.Query); q != "" {
 		args = append(args, "%"+escapeLike(q)+"%")
 		where = append(where, fmt.Sprintf(`s.name ILIKE $%d ESCAPE '\'`, len(args)))
@@ -56,7 +60,12 @@ func (s *Store) ListSessions(ctx context.Context, f ListFilter) ([]Session, int,
 		args = append(args, f.Harnesses)
 		where = append(where, fmt.Sprintf("s.harness = ANY($%d)", len(args)))
 	}
-	cond := strings.Join(where, " AND ")
+	return strings.Join(where, " AND "), args
+}
+
+// ListSessions returns one page of sessions matching the filter and the total match count.
+func (s *Store) ListSessions(ctx context.Context, f ListFilter) ([]Session, int, error) {
+	cond, args := f.where()
 
 	var total int
 	if err := s.pool.QueryRow(ctx, `SELECT count(*) FROM sessions s WHERE `+cond, args...).Scan(&total); err != nil {
@@ -83,14 +92,16 @@ type Stats struct {
 	Active      int     `json:"active"`
 	Failed      int     `json:"failed"`
 	FailureRate float64 `json:"failure_rate"`
-	// API-equivalent spend across all sessions; a lower bound unless CostComplete.
+	// API-equivalent spend of the matching sessions; a lower bound unless CostComplete.
 	TotalCostUSD float64 `json:"total_cost_usd"`
 	CostComplete bool    `json:"cost_complete"`
 }
 
-func (s *Store) Stats(ctx context.Context, owner string) (Stats, error) {
+// Stats aggregates the sessions matching the filter's conditions; sort and paging are ignored.
+func (s *Store) Stats(ctx context.Context, f ListFilter) (Stats, error) {
 	var st Stats
 	var ended int
+	cond, args := f.where()
 	err := s.pool.QueryRow(ctx, `
 		SELECT count(*),
 			count(*) FILTER (WHERE s.status = 'running'),
@@ -99,7 +110,7 @@ func (s *Store) Stats(ctx context.Context, owner string) (Stats, error) {
 			count(*) FILTER (WHERE s.status IN ('complete','failed','stopped')),
 			coalesce(sum(s.cost_usd), 0),
 			coalesce(bool_and(s.cost_complete), true)
-		FROM sessions s WHERE s.owner = $1`, owner).Scan(&st.Total, &st.Running, &st.Active, &st.Failed, &ended,
+		FROM sessions s WHERE `+cond, args...).Scan(&st.Total, &st.Running, &st.Active, &st.Failed, &ended,
 		&st.TotalCostUSD, &st.CostComplete)
 	if err != nil {
 		return st, err

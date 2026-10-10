@@ -57,7 +57,7 @@ export async function login(name: string, host: string): Promise<{ name: string;
 
 // `search` is the query string built by `apiSearch` in lib/query.ts.
 export const listSessions = (search: string) => api<SessionList>(`/sessions?${search}`);
-export const getStats = () => api<Stats>("/stats");
+export const getStats = (search: string) => api<Stats>(`/stats?${search}`);
 export const getSession = (id: string) => api<Session>(`/sessions/${encodeURIComponent(id)}`);
 
 export const createTurn = (id: string, prompt: string) =>

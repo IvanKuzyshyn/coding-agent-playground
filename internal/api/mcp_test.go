@@ -141,14 +141,29 @@ func TestMCPOwnershipAndAuth(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t, 10*time.Millisecond)
 	id := e.create(t, alice)
+	e.stop(t, id)
 	cs := e.mcp(t, bob)
-	for _, tool := range []string{"get_session", "terminate_session", "wait_for_session"} {
-		if _, isErr, text := call(t, cs, tool, map[string]any{"id": id.String()}); !isErr || !strings.Contains(text, "session not found") {
-			t.Errorf("%s on another engineer's session: isError=%v %q", tool, isErr, text)
+	for _, tool := range []string{"get_session", "wait_for_session"} {
+		if got, isErr, text := call(t, cs, tool, map[string]any{"id": id.String()}); isErr || got["owner"] != "alice" {
+			t.Errorf("%s on another user's session: isError=%v %q", tool, isErr, text)
 		}
 	}
-	if list, _, _ := call(t, cs, "list_sessions", nil); list["total"] != float64(0) {
-		t.Errorf("list leaks across owners: %v", list)
+	for _, tc := range []struct {
+		tool string
+		args map[string]any
+	}{
+		{"terminate_session", map[string]any{"id": id.String()}},
+		{"send_follow_up", map[string]any{"id": id.String(), "prompt": "x"}},
+	} {
+		if _, isErr, text := call(t, cs, tc.tool, tc.args); !isErr || !strings.Contains(text, "only alice") {
+			t.Errorf("%s on another user's session: isError=%v %q", tc.tool, isErr, text)
+		}
+	}
+	if list, _, _ := call(t, cs, "list_sessions", nil); list["total"] != float64(1) {
+		t.Errorf("list should include every user's sessions: %v", list)
+	}
+	if list, _, _ := call(t, cs, "list_sessions", map[string]any{"owner": "bob"}); list["total"] != float64(0) {
+		t.Errorf("owner filter: %v", list)
 	}
 
 	for _, token := range []string{"", "nope"} {

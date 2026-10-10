@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import { formatPercent, formatUsd } from "@/lib/format";
 import type { Stats } from "@/lib/types";
 
-export function StatTiles({ stats }: { stats: Stats }) {
+export function StatTiles({ stats, filtered }: { stats: Stats; filtered: boolean }) {
   return (
     <section
       aria-label="Run statistics"
@@ -11,7 +11,7 @@ export function StatTiles({ stats }: { stats: Stats }) {
       <Tile
         label="Total runs"
         value={stats.total.toLocaleString("en-US")}
-        sub="all time"
+        sub={filtered ? "matching filters" : "all time"}
         icon={<path d="M3 4h10M3 8h10M3 12h6" />}
         tone="text-sky-300"
       />

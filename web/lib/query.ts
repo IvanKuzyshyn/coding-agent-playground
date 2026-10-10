@@ -31,6 +31,7 @@ export interface RunsQuery {
   q: string;
   status: DisplayStatus[];
   harness: Harness[];
+  mine: boolean; // only the logged-in user's sessions
   sort: SortKey;
   order: Order;
   page: number;
@@ -58,6 +59,7 @@ export function parseQuery(params: Params | URLSearchParams): RunsQuery {
     q: get("q").trim(),
     status: csv(get("status"), DISPLAY_STATUSES),
     harness: csv(get("harness"), HARNESSES),
+    mine: get("mine") === "1",
     sort: SORTS.includes(sort) ? sort : "created_at",
     order: order === "asc" || order === "desc" ? order : "desc",
     page: Number.isInteger(page) && page > 1 ? page : 1,
@@ -71,6 +73,7 @@ export function uiSearch(query: RunsQuery): string {
   if (query.q) p.set("q", query.q);
   if (query.status.length) p.set("status", query.status.join(","));
   if (query.harness.length) p.set("harness", query.harness.join(","));
+  if (query.mine) p.set("mine", "1");
   if (query.sort !== "created_at") p.set("sort", query.sort);
   if (query.order !== "desc") p.set("order", query.order);
   if (query.page > 1) p.set("page", String(query.page));
@@ -83,11 +86,22 @@ export function uiHref(query: RunsQuery): string {
   return `/${uiSearch(query)}`;
 }
 
-export function apiSearch(query: RunsQuery): string {
+// The filters /sessions and /stats share; user is the logged-in user, for "only mine".
+function filterParams(query: RunsQuery, user: string): URLSearchParams {
   const p = new URLSearchParams();
   if (query.q) p.set("q", query.q);
   if (query.status.length) p.set("status", query.status.join(","));
   if (query.harness.length) p.set("harness", query.harness.join(","));
+  if (query.mine) p.set("owner", user);
+  return p;
+}
+
+export function statsSearch(query: RunsQuery, user: string): string {
+  return filterParams(query, user).toString();
+}
+
+export function apiSearch(query: RunsQuery, user: string): string {
+  const p = filterParams(query, user);
   p.set("sort", query.sort);
   p.set("order", query.order);
   p.set("limit", String(PAGE_SIZE));

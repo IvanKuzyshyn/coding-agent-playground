@@ -25,7 +25,7 @@ running turn and delete a session. `/sessions` and `/sessions/<id>` redirect to 
 
 The mock (`mock/server.mjs`, no dependencies) implements the API contract in memory, including SSE,
 and simulates the session lifecycle with Claude- and Codex-shaped events and an egress denial.
-Log in with any user name; `dev` has seeded sessions, `mallory` is a second user for 404 checks. Cap: 3 active sessions.
+Log in with any user name; `dev` has seeded sessions, `mallory` is a second user (read-only on dev's sessions). Cap: 3 active sessions.
 It starts with 64 finished sessions (some failed, some with unpriced models) and 3 live ones that
 fill the cap, one of them with a slow, long-running turn.
 

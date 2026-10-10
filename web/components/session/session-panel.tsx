@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useActionState, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import { deleteSession, followUp, stopTurn, type ActionState } from "@/app/actions";
+import { useCurrentUser } from "@/components/current-user";
 import { costLabel, costTitle } from "@/components/cost";
 import { HARNESS_LABELS, HarnessIcon } from "@/components/harness-icon";
 import { LiveDuration, LocalTime } from "@/components/live";
@@ -96,6 +97,7 @@ export function SessionPanel({ session, onClose }: { session: Session; onClose: 
 
   const running = session.status === "running";
   const closed = TERMINAL_SESSION.includes(session.status);
+  const mine = useCurrentUser() === session.owner;
 
   const tabs: { id: Tab; label: string; badge?: ReactNode }[] = [
     { id: "timeline", label: "Timeline", badge: <Count n={events.length} /> },
@@ -144,12 +146,15 @@ export function SessionPanel({ session, onClose }: { session: Session; onClose: 
         {tab === "details" && <Details session={session} />}
       </div>
 
-      <FollowUp
-        sessionId={session.id}
-        disabled={closed}
-        running={running || session.current_turn !== undefined}
-        stateKey={`${session.status}|${session.current_turn ?? ""}`}
-      />
+      {/* Only the owner can send follow-ups; the API refuses everyone else. */}
+      {mine && (
+        <FollowUp
+          sessionId={session.id}
+          disabled={closed}
+          running={running || session.current_turn !== undefined}
+          stateKey={`${session.status}|${session.current_turn ?? ""}`}
+        />
+      )}
     </div>
   );
 }
@@ -178,12 +183,15 @@ function Header({ session, running, onClose }: { session: Session; running: bool
           <span className="hidden sm:inline">{session.id}</span>
         </span>
         <div className="ml-auto flex items-center gap-2">
-          <Controls sessionId={session.id} status={session.status} running={running} />
+          <Controls sessionId={session.id} owner={session.owner} status={session.status} running={running} />
           <CloseButton onClose={onClose} />
         </div>
       </div>
       <h2 className="text-lg leading-snug font-semibold break-words text-fg">{session.name}</h2>
       <dl className="flex flex-wrap items-center gap-x-0 gap-y-1.5 text-xs">
+        <Meta label="Owner">
+          <span className="font-mono">{session.owner}</span>
+        </Meta>
         <Meta label="Harness">
           <span className="inline-flex items-center gap-1.5">
             <HarnessIcon harness={session.harness} size={18} />
@@ -487,7 +495,18 @@ function useCurrentMessage(state: ActionState, stateKey: string): ActionState {
   return pinned.stateKey === stateKey ? state : {};
 }
 
-function Controls({ sessionId, status, running }: { sessionId: string; status: Session["status"]; running: boolean }) {
+function Controls({
+  sessionId,
+  owner,
+  status,
+  running,
+}: {
+  sessionId: string;
+  owner: string;
+  status: Session["status"];
+  running: boolean;
+}) {
+  const mine = useCurrentUser() === owner;
   const [stopState, stopAction, stopping] = useActionState(stopTurn, {});
   const [delState, delAction, deleting] = useActionState(deleteSession, {});
   const [last, setLast] = useState<"stop" | "delete">();
@@ -495,6 +514,9 @@ function Controls({ sessionId, status, running }: { sessionId: string; status: S
   const stopMsg = useCurrentMessage(stopState, stateKey);
   const delMsg = useCurrentMessage(delState, stateKey);
   const closed = TERMINAL_SESSION.includes(status);
+  if (!mine && !closed) {
+    return <span className="text-xs text-muted">Read-only: started by {owner}</span>;
+  }
   return (
     <div className="flex items-center gap-2">
       {!closed && (
@@ -516,7 +538,7 @@ function Controls({ sessionId, status, running }: { sessionId: string; status: S
         <form
           action={delAction}
           onSubmit={(e) => {
-            if (!confirm("Delete this session and destroy its sandbox?")) e.preventDefault();
+            if (!confirm("Terminate this session and destroy its sandbox?")) e.preventDefault();
             else setLast("delete");
           }}
         >
@@ -525,7 +547,7 @@ function Controls({ sessionId, status, running }: { sessionId: string; status: S
             disabled={deleting}
             className="h-8 rounded-md border border-red-500/60 bg-red-500/10 px-3 text-sm whitespace-nowrap text-red-200 hover:bg-red-500/20 disabled:opacity-50"
           >
-            {deleting ? "Deleting…" : "Delete session"}
+            {deleting ? "Terminating…" : "Terminate session"}
           </button>
         </form>
       )}

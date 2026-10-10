@@ -13,7 +13,7 @@ import (
 )
 
 func (s *Server) events(w http.ResponseWriter, r *http.Request) {
-	id, ok := s.ownedID(w, r)
+	id, ok := s.visibleID(w, r)
 	if !ok {
 		return
 	}

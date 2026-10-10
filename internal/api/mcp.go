@@ -62,7 +62,7 @@ func (s *Server) mcpHandler() http.Handler {
 	}, s.mcpWait)
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "list_sessions",
-		Description: "List your sessions, newest first, optionally filtered by status, harness or name substring.",
+		Description: "List sessions of every user, newest first, optionally filtered by owner, status, harness or name substring.",
 		Annotations: readOnly,
 	}, s.mcpList)
 	mcp.AddTool(srv, &mcp.Tool{
@@ -117,6 +117,7 @@ type mcpEvent struct {
 
 type mcpSession struct {
 	ID              string            `json:"id"`
+	Owner           string            `json:"owner" jsonschema:"the user who started it; only they can follow up or terminate"`
 	Name            string            `json:"name"`
 	Status          string            `json:"status" jsonschema:"pending, provisioning, idle, running, stopping, complete, failed or stopped"`
 	Harness         string            `json:"harness"`
@@ -141,7 +142,7 @@ type mcpSession struct {
 
 func (s *Server) mcpView(ss store.Session, turns []store.Turn, maxChars int) mcpSession {
 	out := mcpSession{
-		ID: ss.ID.String(), Name: ss.Name, Status: ss.Status, Harness: ss.Harness, Preset: ss.Spec.Preset,
+		ID: ss.ID.String(), Owner: ss.Owner, Name: ss.Name, Status: ss.Status, Harness: ss.Harness, Preset: ss.Spec.Preset,
 		Repo: ss.Spec.Repo, Model: ss.Spec.Model, Lifecycle: ss.Spec.Lifecycle, Error: ss.Error,
 		TokensUsed: ss.TokensUsed, TokenBudget: ss.Spec.Limits.TokenBudget, CostUSD: ss.CostUSD,
 		DurationSeconds: duration(ss), CreatedAt: ss.CreatedAt, EndedAt: ss.EndedAt,
@@ -222,7 +223,7 @@ type getIn struct {
 }
 
 func (s *Server) mcpGet(ctx context.Context, req *mcp.CallToolRequest, in getIn) (*mcp.CallToolResult, mcpSession, error) {
-	ss, err := s.owned(ctx, mcpOwner(req), in.ID)
+	ss, err := s.find(ctx, in.ID)
 	if err != nil {
 		return nil, mcpSession{}, s.mcpErr(err)
 	}
@@ -268,15 +269,14 @@ func settled(ss store.Session) bool {
 	return session.Terminal(ss.Status) || (ss.Status == session.StatusIdle && ss.CurrentTurn == nil)
 }
 
-func (s *Server) mcpWait(ctx context.Context, req *mcp.CallToolRequest, in waitIn) (*mcp.CallToolResult, mcpSession, error) {
-	who := mcpOwner(req)
+func (s *Server) mcpWait(ctx context.Context, _ *mcp.CallToolRequest, in waitIn) (*mcp.CallToolResult, mcpSession, error) {
 	timeout := defaultWait
 	if in.TimeoutSeconds > 0 {
 		timeout = min(time.Duration(in.TimeoutSeconds)*time.Second, maxWait)
 	}
 	deadline := time.Now().Add(timeout)
 	for {
-		ss, err := s.owned(ctx, who, in.ID)
+		ss, err := s.find(ctx, in.ID)
 		if err != nil {
 			return nil, mcpSession{}, s.mcpErr(err)
 		}
@@ -295,6 +295,7 @@ func (s *Server) mcpWait(ctx context.Context, req *mcp.CallToolRequest, in waitI
 }
 
 type listIn struct {
+	Owner   string   `json:"owner,omitempty" jsonschema:"only sessions started by this user; default: every user's"`
 	Status  []string `json:"status,omitempty" jsonschema:"only these statuses"`
 	Harness []string `json:"harness,omitempty" jsonschema:"only these harnesses"`
 	Query   string   `json:"query,omitempty" jsonschema:"case-insensitive substring of the name"`
@@ -322,7 +323,7 @@ func (s *Server) mcpList(ctx context.Context, req *mcp.CallToolRequest, in listI
 		limit = 20
 	}
 	list, total, err := s.Store.ListSessions(ctx, store.ListFilter{
-		Owner: mcpOwner(req), Query: in.Query, Statuses: in.Status, Harnesses: in.Harness,
+		Owner: in.Owner, Query: in.Query, Statuses: in.Status, Harnesses: in.Harness,
 		Sort: "created_at", Desc: true, Limit: min(limit, 200),
 	})
 	if err != nil {
