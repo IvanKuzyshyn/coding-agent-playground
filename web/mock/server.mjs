@@ -89,12 +89,11 @@ const PRICES = {
 const UNPRICED_MODELS = new Set(["experimental-preview"]);
 
 function addCost(s, usage) {
-  if (UNPRICED_MODELS.has(s.model)) {
-    s.cost_complete = false;
-    return;
-  }
+  // Pretend half of an unpriced model's traffic went to priced helper models.
+  const share = UNPRICED_MODELS.has(s.model) ? 0.5 : 1;
+  if (share < 1) s.cost_complete = false;
   const p = PRICES[s.harness];
-  s.cost_usd += (usage.input_tokens * p.input + usage.cached_input_tokens * p.cached + usage.output_tokens * p.output) / 1e6;
+  s.cost_usd += (share * (usage.input_tokens * p.input + usage.cached_input_tokens * p.cached + usage.output_tokens * p.output)) / 1e6;
 }
 
 function claudeScript(s, turn) {
