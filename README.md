@@ -26,7 +26,7 @@ flowchart LR
 
 | Built | Reused |
 |---|---|
-| Go control plane: API, reconcile-loop supervisor, Docker provider, harness adapters (`internal/`) | Claude Code, Codex CLI (pinned) |
+| Go control plane: API, reconcile-loop supervisor, Docker provider, harness adapters (`internal/`) | Claude Code, Codex CLI, gh, yq, jq in the sandbox image (pinned) |
 | Credential-swapping gateway + CONNECT allowlist proxy (`internal/gateway`) | Docker Engine, Postgres, Docker Compose |
 | `sandboxd` in-sandbox exec daemon (`cmd/sandboxd`) | Next.js, pgx, Go stdlib HTTP |
 | Web UI (`web/`) | |

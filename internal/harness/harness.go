@@ -133,7 +133,8 @@ Only when the user asks you to push or open a pull request:
 2. git push -u origin <branch>
 3. terrarium-pr "<title>" "<body>" opens the pull request on %s from the current branch.
 
-No other GitHub repository or API is reachable.
+No other GitHub repository or API is reachable. The gh CLI is installed but has no GitHub access
+here; use git and terrarium-pr instead.
 `, session.BranchPrefix(sessionID), spec.Repo)
 }
 
