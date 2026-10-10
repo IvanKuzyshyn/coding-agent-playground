@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -36,6 +37,9 @@ type Server struct {
 	Log        *slog.Logger
 	// EventPoll is how often an SSE stream checks for new events.
 	EventPoll time.Duration
+	// DenyNet is the sandbox network. The server is attached to it to reach sandboxd, so the API
+	// must refuse anything arriving from there.
+	DenyNet *net.IPNet
 }
 
 func (s *Server) Handler() http.Handler {
@@ -55,7 +59,19 @@ func (s *Server) Handler() http.Handler {
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 	})
 	mux.Handle("/", s.Engineers.middleware(authed))
-	return mux
+	return s.denySandboxes(mux)
+}
+
+func (s *Server) denySandboxes(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		host, _, err := net.SplitHostPort(r.RemoteAddr)
+		ip := net.ParseIP(host)
+		if s.DenyNet != nil && (err != nil || ip == nil || s.DenyNet.Contains(ip)) {
+			writeError(w, http.StatusForbidden, "forbidden")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func (s *Server) whoami(w http.ResponseWriter, r *http.Request) {
@@ -95,16 +111,6 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	who := owner(r.Context())
-	active, err := s.Store.CountActiveByOwner(r.Context(), who)
-	if err != nil {
-		s.internal(w, err)
-		return
-	}
-	if active >= s.MaxActive {
-		writeError(w, http.StatusTooManyRequests, fmt.Sprintf("active session limit (%d) reached", s.MaxActive))
-		return
-	}
-
 	id := uuid.New()
 	err = s.Store.CreateSession(r.Context(), store.NewSession{
 		ID:                id,
@@ -114,7 +120,12 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 		GatewaySecretHash: credentials.Hash(credentials.DeriveSecret(s.SessionKey, id.String())),
 		ExpiresAt:         time.Now().Add(time.Duration(spec.Limits.TTLSeconds) * time.Second),
 		Prompt:            req.Prompt,
+		MaxActive:         s.MaxActive,
 	})
+	if errors.Is(err, store.ErrLimit) {
+		writeError(w, http.StatusTooManyRequests, fmt.Sprintf("active session limit (%d) reached", s.MaxActive))
+		return
+	}
 	if err != nil {
 		s.internal(w, err)
 		return

@@ -86,7 +86,7 @@ metrics_exporter = "none"
 func TurnArgv(spec session.Spec, prompt, harnessSession string) []string {
 	switch spec.Harness {
 	case session.HarnessClaude:
-		argv := []string{"claude", "-p", prompt,
+		argv := []string{"claude", "-p",
 			"--output-format", "stream-json", "--verbose",
 			"--permission-mode", "bypassPermissions"}
 		if spec.Limits.MaxAgentSteps > 0 {
@@ -101,7 +101,8 @@ func TurnArgv(spec session.Spec, prompt, harnessSession string) []string {
 		if harnessSession != "" {
 			argv = append(argv, "--resume", harnessSession)
 		}
-		return argv
+		// "--" stops option parsing so a prompt starting with "-" stays a prompt.
+		return append(argv, "--", prompt)
 	case session.HarnessCodex:
 		argv := []string{"codex", "exec"}
 		if harnessSession != "" {
@@ -123,6 +124,26 @@ type Usage struct {
 	OutputTokens      int64 `json:"output_tokens"`
 	CachedInputTokens int64 `json:"cached_input_tokens"`
 	AgentSteps        int   `json:"agent_steps"`
+	// Codex reports totals for the whole thread on every turn.completed; these keep the totals so
+	// the next turn can be stored as a difference. Zero for Claude, whose usage is per process.
+	ThreadInputTokens       int64 `json:"thread_input_tokens,omitempty"`
+	ThreadOutputTokens      int64 `json:"thread_output_tokens,omitempty"`
+	ThreadCachedInputTokens int64 `json:"thread_cached_input_tokens,omitempty"`
+}
+
+// PerTurn converts thread totals into this turn's usage given the previous turn's usage.
+func (u Usage) PerTurn(prev *Usage) Usage {
+	if u.ThreadInputTokens == 0 && u.ThreadOutputTokens == 0 {
+		return u
+	}
+	var p Usage
+	if prev != nil {
+		p = *prev
+	}
+	u.InputTokens = max(u.ThreadInputTokens-p.ThreadInputTokens, 0)
+	u.OutputTokens = max(u.ThreadOutputTokens-p.ThreadOutputTokens, 0)
+	u.CachedInputTokens = max(u.ThreadCachedInputTokens-p.ThreadCachedInputTokens, 0)
+	return u
 }
 
 // Update is what one event line tells the supervisor.
@@ -239,9 +260,9 @@ func parseCodex(line []byte) Update {
 	case "turn.completed":
 		u.Final = true
 		u.Usage = &Usage{
-			InputTokens:       e.Usage.InputTokens - e.Usage.CachedInputTokens,
-			OutputTokens:      e.Usage.OutputTokens,
-			CachedInputTokens: e.Usage.CachedInputTokens,
+			ThreadInputTokens:       e.Usage.InputTokens - e.Usage.CachedInputTokens,
+			ThreadOutputTokens:      e.Usage.OutputTokens,
+			ThreadCachedInputTokens: e.Usage.CachedInputTokens,
 		}
 	case "turn.failed":
 		u.Final = true

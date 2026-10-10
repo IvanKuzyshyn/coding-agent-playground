@@ -56,6 +56,15 @@ func (s *Supervisor) Run(ctx context.Context) error {
 	t := time.NewTicker(s.Interval)
 	defer t.Stop()
 	for {
+		// The advisory lock lives on this connection; if it dropped, another supervisor may now
+		// hold the lock, so this one must stop rather than race it.
+		if _, err := conn.Exec(ctx, `SELECT 1`); err != nil {
+			s.stopWorkers()
+			if ctx.Err() != nil {
+				return nil
+			}
+			return fmt.Errorf("supervisor lock connection lost: %w", err)
+		}
 		if err := s.reconcile(ctx); err != nil && ctx.Err() == nil {
 			s.Log.Error("reconcile", "err", err)
 		}
@@ -131,8 +140,9 @@ func (s *Supervisor) enforceDeadlines(ctx context.Context, ss store.Session, now
 	case ss.Status == session.StatusIdle && ss.IdleUntil != nil && now.After(*ss.IdleUntil):
 		_, err := s.Store.SetStatus(ctx, ss.ID, []string{session.StatusIdle}, session.StatusStopping, "idle timeout")
 		return err
-	case now.After(ss.ExpiresAt) && (ss.Status == session.StatusPending || ss.Status == session.StatusProvisioning || ss.Status == session.StatusIdle):
-		// Running turns are stopped by the tail loop, which then moves the session to stopping.
+	case now.After(ss.ExpiresAt) && ss.Status != session.StatusStopping && ss.Status != session.StatusFailed:
+		// Also for running sessions: the tail loop stops the turn when it sees stopping, and this
+		// still applies if the tail is stuck on an unresponsive sandboxd.
 		_, err := s.Store.SetStatus(ctx, ss.ID, []string{ss.Status}, session.StatusStopping, "session ttl expired")
 		return err
 	}
@@ -206,7 +216,7 @@ func (s *Supervisor) work(ctx context.Context, id uuid.UUID) error {
 			if errors.Is(err, store.ErrNotFound) {
 				if ss.Status == session.StatusRunning {
 					// A crash between finishing the turn and marking the session idle.
-					if _, err := s.Store.SetStatus(ctx, id, []string{session.StatusRunning}, session.StatusIdle, "no active turn"); err != nil {
+					if err := s.Ops.BecomeIdle(ctx, ss, []string{session.StatusRunning}, "no active turn"); err != nil {
 						return err
 					}
 				}

@@ -62,8 +62,19 @@ func (o *Ops) client(s store.Session) SandboxAPI {
 // Every step is idempotent: the container is found by name, files are overwritten, and the
 // clone command is keyed by a stable id.
 func (o *Ops) Provision(ctx context.Context, s store.Session) error {
-	if _, err := o.Store.SetStatus(ctx, s.ID, []string{session.StatusPending}, session.StatusProvisioning, "creating sandbox"); err != nil {
+	changed, err := o.Store.SetStatus(ctx, s.ID, []string{session.StatusPending}, session.StatusProvisioning, "creating sandbox")
+	if err != nil {
 		return err
+	}
+	if !changed {
+		// Resuming after a crash continues; a session deleted meanwhile must not get a sandbox.
+		cur, err := o.Store.GetSession(ctx, s.ID)
+		if err != nil {
+			return err
+		}
+		if cur.Status != session.StatusProvisioning {
+			return nil
+		}
 	}
 	// Cleanup obligation before the resource exists.
 	if err := o.Store.SetContainerID(ctx, s.ID, o.Sandboxes.Name(s.ID)); err != nil {
@@ -90,11 +101,14 @@ func (o *Ops) Provision(ctx context.Context, s store.Session) error {
 	}
 	if s.Spec.Repo != "" {
 		o.event(ctx, s.ID, store.EventSystem, nil, map[string]string{"message": "cloning " + s.Spec.Repo})
-		code, stderr, err := o.runToCompletion(ctx, c, sandboxclient.CommandRequest{
+		code, stderr, err := o.runToCompletion(ctx, s, c, sandboxclient.CommandRequest{
 			ID:   "provision-clone",
 			Argv: []string{"git", "clone", "--depth", "1", "https://github.com/" + s.Spec.Repo + ".git", harness.WorkDir},
 			Cwd:  harness.Home,
-		})
+		}, cloneTimeout)
+		if errors.Is(err, errNoLongerProvisioning) {
+			return nil
+		}
 		if err != nil {
 			return err
 		}
@@ -102,10 +116,11 @@ func (o *Ops) Provision(ctx context.Context, s store.Session) error {
 			return permanent(fmt.Errorf("git clone exited %d: %s", code, lastLine(stderr)))
 		}
 	}
-	return o.becomeIdle(ctx, s, []string{session.StatusProvisioning}, "sandbox ready")
+	return o.BecomeIdle(ctx, s, []string{session.StatusProvisioning}, "sandbox ready")
 }
 
-func (o *Ops) becomeIdle(ctx context.Context, s store.Session, from []string, msg string) error {
+// BecomeIdle moves the session to idle and starts its idle timer.
+func (o *Ops) BecomeIdle(ctx context.Context, s store.Session, from []string, msg string) error {
 	if s.Spec.Limits.IdleTimeoutSeconds > 0 {
 		t := time.Now().Add(time.Duration(s.Spec.Limits.IdleTimeoutSeconds) * time.Second)
 		if err := o.Store.SetIdleUntil(ctx, s.ID, &t); err != nil {
@@ -134,13 +149,32 @@ func waitHealthy(ctx context.Context, c SandboxAPI, timeout time.Duration) error
 	}
 }
 
-// runToCompletion starts (or re-attaches to) a short command and returns its exit code and stderr.
-func (o *Ops) runToCompletion(ctx context.Context, c SandboxAPI, req sandboxclient.CommandRequest) (int, string, error) {
-	if _, err := c.StartCommand(ctx, req); err != nil {
+const cloneTimeout = 10 * time.Minute
+
+// errNoLongerProvisioning aborts provisioning when the session was deleted or expired meanwhile;
+// the worker re-reads the session and cleans up.
+var errNoLongerProvisioning = errors.New("session no longer provisioning")
+
+// runToCompletion starts (or re-attaches to) a short command and returns its exit code and
+// stderr. It kills the command on timeout or when the session leaves provisioning.
+func (o *Ops) runToCompletion(ctx context.Context, s store.Session, c SandboxAPI, req sandboxclient.CommandRequest, timeout time.Duration) (int, string, error) {
+	cmd, err := c.StartCommand(ctx, req)
+	if err != nil {
 		return 0, "", err
 	}
+	deadline := time.Now().Add(timeout)
 	for {
-		cmd, err := c.Command(ctx, req.ID)
+		if time.Now().After(deadline) {
+			_ = ignoreExited(c.Signal(ctx, req.ID, "KILL"))
+			return 0, "", permanent(fmt.Errorf("%s timed out after %s", req.ID, timeout))
+		}
+		if cur, err := o.Store.GetSession(ctx, s.ID); err != nil {
+			return 0, "", err
+		} else if cur.Status != session.StatusProvisioning {
+			_ = ignoreExited(c.Signal(ctx, req.ID, "KILL"))
+			return 0, "", errNoLongerProvisioning
+		}
+		cmd, err = c.Command(ctx, req.ID)
 		if err != nil {
 			return 0, "", err
 		}

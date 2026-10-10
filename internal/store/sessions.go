@@ -62,7 +62,12 @@ type NewSession struct {
 	GatewaySecretHash []byte
 	ExpiresAt         time.Time
 	Prompt            string
+	// MaxActive caps the owner's sessions that are not stopped or failed; 0 means no cap.
+	MaxActive int
 }
+
+// ErrLimit is returned when creating a session would exceed the owner's active-session cap.
+var ErrLimit = errors.New("active session limit reached")
 
 const sessionCols = `s.id, s.owner, s.status, s.harness, s.spec, coalesce(s.harness_session,''),
 	coalesce(s.container_id,''), s.sandbox_token, s.tokens_used, coalesce(s.error,''), s.attempts,
@@ -94,6 +99,19 @@ func (s *Store) CreateSession(ctx context.Context, n NewSession) error {
 		return err
 	}
 	return pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		if n.MaxActive > 0 {
+			// Serialise creates per owner so concurrent requests cannot all pass the count.
+			if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext('sessions:' || $1))`, n.Owner); err != nil {
+				return err
+			}
+			var active int
+			if err := tx.QueryRow(ctx, `SELECT count(*) FROM sessions WHERE owner = $1 AND status NOT IN ('stopped','failed')`, n.Owner).Scan(&active); err != nil {
+				return err
+			}
+			if active >= n.MaxActive {
+				return ErrLimit
+			}
+		}
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO sessions (id, owner, status, harness, spec, sandbox_token, gateway_secret_hash, expires_at)
 			VALUES ($1, $2, 'pending', $3, $4, $5, $6, $7)`,

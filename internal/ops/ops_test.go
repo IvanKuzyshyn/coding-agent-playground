@@ -157,7 +157,7 @@ func TestHappyPathClaude(t *testing.T) {
 		t.Errorf("usage: %+v", usage)
 	}
 	cmd, _ := e.fleet.Command(s.ID, "turn-1")
-	if slices.Contains(cmd.Argv, "--resume") || cmd.Argv[0] != "claude" || cmd.Argv[2] != "say ok" {
+	if slices.Contains(cmd.Argv, "--resume") || cmd.Argv[0] != "claude" || cmd.Argv[len(cmd.Argv)-1] != "say ok" {
 		t.Errorf("first turn argv: %v", cmd.Argv)
 	}
 
@@ -243,7 +243,7 @@ func TestFollowUpResumesClaudeSession(t *testing.T) {
 	}
 	cmd, _ := e.fleet.Command(s.ID, "turn-2")
 	i := slices.Index(cmd.Argv, "--resume")
-	if i < 0 || cmd.Argv[i+1] != testutil.ClaudeSessionID || cmd.Argv[2] != "follow up" {
+	if i < 0 || cmd.Argv[i+1] != testutil.ClaudeSessionID || cmd.Argv[len(cmd.Argv)-1] != "follow up" {
 		t.Errorf("turn 2 argv: %v", cmd.Argv)
 	}
 }

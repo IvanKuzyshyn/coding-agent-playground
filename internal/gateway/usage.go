@@ -28,6 +28,7 @@ type usageTee struct {
 	rc     io.ReadCloser
 	kind   usageKind
 	sse    bool
+	sniff  bool // no usable Content-Type: decide SSE vs JSON from the first byte
 	report func(int64)
 
 	line     []byte
@@ -48,6 +49,9 @@ func newUsageTee(rc io.ReadCloser, kind usageKind, contentType string, report fu
 	case strings.Contains(ct, "text/event-stream"):
 		t.sse = true
 	case strings.Contains(ct, "json"):
+	case ct == "":
+		// chatgpt.com/backend-api/codex/responses streams SSE without a Content-Type header.
+		t.sniff = true
 	default:
 		return rc
 	}
@@ -71,6 +75,15 @@ func (t *usageTee) Close() error {
 }
 
 func (t *usageTee) feed(b []byte) {
+	if t.sniff {
+		trimmed := bytes.TrimLeft(b, " \t\r\n")
+		if len(trimmed) == 0 {
+			return
+		}
+		t.sniff = false
+		t.sse = trimmed[0] != '{'
+		b = trimmed
+	}
 	if !t.sse {
 		if t.skipBody {
 			return

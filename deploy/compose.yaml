@@ -32,6 +32,8 @@ services:
   server:
     <<: *control-plane
     command: ["server"]
+    # The supervisor exits if it loses its database lock; restart rather than run unsupervised.
+    restart: unless-stopped
     # Creates sandboxes through the Docker socket. Socket access is root-equivalent on the host;
     # in the real setup this moves to a sandbox runtime API (see threat model).
     user: root
@@ -50,6 +52,7 @@ services:
   gateway:
     <<: *control-plane
     command: ["gateway"]
+    restart: unless-stopped
     secrets: [claude_oauth_token]
     volumes:
       # Dedicated Codex login owned by the gateway (`make codex-login`). Never the host's ~/.codex.
@@ -64,6 +67,7 @@ services:
   web:
     build: ../web
     image: terrarium-web:local
+    restart: unless-stopped
     environment:
       TERRARIUM_API_URL: http://server:8080
       # Encrypts the session cookie that carries the engineer's API token; created by `make up`.
@@ -83,6 +87,9 @@ networks:
   sandbox:
     name: terrarium-sandbox
     internal: true
+    # Pinned so the server can refuse API requests from sandboxes (TERRARIUM_SANDBOX_SUBNET).
+    ipam:
+      config: [{ subnet: 172.31.250.0/24 }]
 
 volumes:
   postgres-data:

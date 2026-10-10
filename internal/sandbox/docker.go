@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -24,6 +25,7 @@ var ErrNotFound = errors.New("sandbox not found")
 const (
 	LabelSessionID = "terrarium.session-id"
 	labelManaged   = "terrarium.managed"
+	labelInstance  = "terrarium.instance"
 	sandboxdPort   = 7777
 	apiVersion     = "v1.47"
 )
@@ -55,21 +57,24 @@ type Provider interface {
 }
 
 type Docker struct {
-	network string
-	hc      *http.Client
+	network  string
+	instance string
+	hc       *http.Client
 }
 
-// NewDocker talks to the Engine API on a unix socket. Sandboxes join only `network`.
-func NewDocker(socketPath, network string) *Docker {
+// NewDocker talks to the Engine API on a unix socket. Sandboxes join only `network`. `instance`
+// labels this deployment's sandboxes so orphan cleanup never touches another stack's containers.
+func NewDocker(socketPath, network, instance string) *Docker {
 	tr := &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 		var d net.Dialer
 		return d.DialContext(ctx, "unix", socketPath)
 	}}
-	return &Docker{network: network, hc: &http.Client{Transport: tr}}
+	// A hung daemon must not stall the reconcile loop forever.
+	return &Docker{network: network, instance: instance, hc: &http.Client{Transport: tr, Timeout: 60 * time.Second}}
 }
 
 func (d *Docker) Name(id uuid.UUID) string { return "terrarium-sbx-" + id.String() }
-func volumeName(id uuid.UUID) string      { return "terrarium-home-" + id.String() }
+func volumeName(id uuid.UUID) string       { return "terrarium-home-" + id.String() }
 
 func (d *Docker) endpoint(id uuid.UUID) string {
 	return fmt.Sprintf("http://%s:%d", d.Name(id), sandboxdPort)
@@ -86,7 +91,9 @@ func (d *Docker) Create(ctx context.Context, req CreateRequest) (Sandbox, error)
 	body := map[string]any{
 		"Image":  req.Image,
 		"Env":    env,
-		"Labels": map[string]string{LabelSessionID: req.SessionID.String(), labelManaged: "true"},
+		"Labels": map[string]string{LabelSessionID: req.SessionID.String(), labelManaged: "true", labelInstance: d.instance},
+		// Explicit, so an image without USER never runs the agent as root.
+		"User": "1000:1000",
 		"HostConfig": map[string]any{
 			"NetworkMode":    d.network,
 			"ReadonlyRootfs": true,
@@ -99,6 +106,7 @@ func (d *Docker) Create(ctx context.Context, req CreateRequest) (Sandbox, error)
 			"PidsLimit":     req.Resources.PIDs,
 			"NanoCpus":      int64(req.Resources.CPUs * 1e9),
 			"Memory":        req.Resources.MemoryMB * 1024 * 1024,
+			"MemorySwap":    req.Resources.MemoryMB * 1024 * 1024, // equal to Memory: no swap
 			"RestartPolicy": map[string]string{"Name": "no"},
 		},
 	}
@@ -144,7 +152,7 @@ func (d *Docker) Delete(ctx context.Context, id uuid.UUID) error {
 }
 
 func (d *Docker) List(ctx context.Context) ([]Sandbox, error) {
-	filters, _ := json.Marshal(map[string][]string{"label": {labelManaged + "=true"}})
+	filters, _ := json.Marshal(map[string][]string{"label": {labelManaged + "=true", labelInstance + "=" + d.instance}})
 	var list []struct {
 		ID     string            `json:"Id"`
 		State  string            `json:"State"`

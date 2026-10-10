@@ -2,6 +2,7 @@ package ops
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -49,8 +50,13 @@ func (o *Ops) RunTurn(ctx context.Context, s store.Session, t store.Turn) error 
 		}
 		// Record the command id before starting, so a crash in between re-attaches instead of
 		// starting a second harness.
-		if _, err := o.Store.StartTurn(ctx, s.ID, seq, cmdID); err != nil {
+		started, err := o.Store.StartTurn(ctx, s.ID, seq, cmdID)
+		if err != nil {
 			return err
+		}
+		if !started {
+			// The turn was cancelled (session ending) between the read and here.
+			return nil
 		}
 		o.event(ctx, s.ID, store.EventLifecycle, &seq, map[string]string{"turn_status": session.TurnRunning})
 	}
@@ -80,6 +86,7 @@ type tail struct {
 	outOff int64
 	errOff int64
 
+	pending     []store.NewEvent // events not yet committed with their offsets
 	final       *harness.Update
 	lastMessage string
 	stopReason  string
@@ -98,9 +105,11 @@ func (tl *tail) run(ctx context.Context) error {
 			return err
 		}
 		if outN+errN > 0 {
-			if err := tl.o.Store.SetTurnOffsets(ctx, tl.s.ID, tl.seq, tl.outOff, tl.errOff); err != nil {
+			// Events and offsets commit together: a crash either replays none or all of a batch.
+			if err := tl.o.Store.AppendTurnOutput(ctx, tl.s.ID, tl.seq, tl.pending, tl.outOff, tl.errOff); err != nil {
 				return err
 			}
+			tl.pending = tl.pending[:0]
 		}
 		if state == "exited" && outDone && errDone {
 			return nil
@@ -146,7 +155,7 @@ func (tl *tail) readStream(ctx context.Context, stream string) (consumed int, do
 			if len(line) > maxStderrLineBytes {
 				line = line[:maxStderrLineBytes]
 			}
-			tl.o.event(ctx, tl.s.ID, store.EventStderr, &tl.seq, map[string]string{"line": string(line)})
+			tl.add(store.EventStderr, map[string]string{"line": string(line)})
 		}
 	}
 	*off += int64(n)
@@ -154,15 +163,20 @@ func (tl *tail) readStream(ctx context.Context, stream string) (consumed int, do
 	return n, state == "exited" && len(data) == 0, state, nil
 }
 
+func (tl *tail) add(kind string, payload any) {
+	seq := tl.seq
+	tl.pending = append(tl.pending, store.NewEvent{Kind: kind, TurnSeq: &seq, Payload: payload})
+}
+
 func (tl *tail) handleStdout(ctx context.Context, line []byte) {
 	u, raw, ok := harness.ParseLine(tl.s.Harness, line)
 	if !ok {
 		if len(strings.TrimSpace(string(line))) > 0 {
-			tl.o.event(ctx, tl.s.ID, store.EventSystem, &tl.seq, map[string]string{"message": string(line)})
+			tl.add(store.EventSystem, map[string]string{"message": string(line)})
 		}
 		return
 	}
-	tl.o.event(ctx, tl.s.ID, store.EventHarness, &tl.seq, map[string]any{"harness": tl.s.Harness, "event": raw})
+	tl.add(store.EventHarness, map[string]any{"harness": tl.s.Harness, "event": raw})
 	if u.HarnessSession != "" && tl.s.HarnessSession == "" {
 		if err := tl.o.Store.SetHarnessSession(ctx, tl.s.ID, u.HarnessSession); err != nil {
 			tl.o.Log.Warn("set harness session", "session", tl.s.ID, "err", err)
@@ -236,7 +250,11 @@ func (o *Ops) finishTurn(ctx context.Context, s store.Session, t store.Turn, tl 
 	status, errMsg := session.TurnComplete, ""
 	var usage any
 	if tl.final != nil && tl.final.Usage != nil {
-		usage = tl.final.Usage
+		prev, err := o.previousUsage(ctx, s, t.Seq)
+		if err != nil {
+			return err
+		}
+		usage = tl.final.Usage.PerTurn(prev)
 	}
 	switch {
 	case tl.limitHit:
@@ -250,8 +268,13 @@ func (o *Ops) finishTurn(ctx context.Context, s store.Session, t store.Turn, tl 
 	case tl.final.Failed:
 		status, errMsg = session.TurnFailed, tl.final.Error
 	}
-	if _, err := o.Store.FinishTurn(ctx, s.ID, t.Seq, status, tl.lastMessage, errMsg, usage); err != nil {
+	finished, err := o.Store.FinishTurn(ctx, s.ID, t.Seq, status, tl.lastMessage, errMsg, usage)
+	if err != nil {
 		return err
+	}
+	if !finished {
+		// Another writer already ended this turn (e.g. cleanup cancelled it); it owns the session state.
+		return nil
 	}
 	seq := t.Seq
 	o.event(ctx, s.ID, store.EventLifecycle, &seq, map[string]string{"turn_status": status})
@@ -260,7 +283,7 @@ func (o *Ops) finishTurn(ctx context.Context, s store.Session, t store.Turn, tl 
 		_, err := o.Store.SetStatus(ctx, s.ID, []string{session.StatusRunning}, session.StatusStopping, tl.stopReason)
 		return err
 	}
-	return o.becomeIdle(ctx, s, []string{session.StatusRunning}, fmt.Sprintf("turn %d %s", seq, status))
+	return o.BecomeIdle(ctx, s, []string{session.StatusRunning}, fmt.Sprintf("turn %d %s", seq, status))
 }
 
 // IsLost reports whether the session's sandbox no longer exists or is not running.
@@ -273,4 +296,23 @@ func (o *Ops) IsLost(ctx context.Context, s store.Session) (bool, error) {
 		return false, err
 	}
 	return !sb.Running, nil
+}
+
+// previousUsage returns the usage of the latest earlier turn that recorded one.
+func (o *Ops) previousUsage(ctx context.Context, s store.Session, seq int) (*harness.Usage, error) {
+	turns, err := o.Store.Turns(ctx, s.ID)
+	if err != nil {
+		return nil, err
+	}
+	for i := len(turns) - 1; i >= 0; i-- {
+		if turns[i].Seq >= seq || len(turns[i].Usage) == 0 {
+			continue
+		}
+		var u harness.Usage
+		if err := json.Unmarshal(turns[i].Usage, &u); err != nil {
+			return nil, err
+		}
+		return &u, nil
+	}
+	return nil, nil
 }

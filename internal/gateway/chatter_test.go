@@ -1,6 +1,10 @@
 package gateway
 
-import "testing"
+import (
+	"io"
+	"strings"
+	"testing"
+)
 
 func TestExpectedCodexChatter(t *testing.T) {
 	for path, want := range map[string]bool{
@@ -15,5 +19,18 @@ func TestExpectedCodexChatter(t *testing.T) {
 		if got := expectedCodexChatter(path); got != want {
 			t.Errorf("%s: got %v want %v", path, got, want)
 		}
+	}
+}
+
+func TestUsageTeeSniffsSSEWithoutContentType(t *testing.T) {
+	stream := "event: response.created\ndata: {\"type\":\"response.created\"}\n\n" +
+		"event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":100,\"input_tokens_details\":{\"cached_tokens\":60},\"output_tokens\":7}}}\n\n"
+	var got int64
+	rc := newUsageTee(io.NopCloser(strings.NewReader(stream)), usageCodex, "", func(n int64) { got = n })
+	if _, err := io.Copy(io.Discard, rc); err != nil {
+		t.Fatal(err)
+	}
+	if got != 47 {
+		t.Errorf("usage: got %d want 47", got)
 	}
 }

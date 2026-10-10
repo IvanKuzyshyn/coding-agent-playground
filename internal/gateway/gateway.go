@@ -340,7 +340,8 @@ func (g *Gateway) rewrite(pr *httputil.ProxyRequest) {
 
 func (g *Gateway) modifyResponse(resp *http.Response) error {
 	info := resp.Request.Context().Value(ctxKey{}).(*reqInfo)
-	slog.Info("upstream response", "session", info.sessionID, "path", resp.Request.URL.Path, "status", resp.StatusCode)
+	slog.Info("upstream response", "session", info.sessionID, "path", resp.Request.URL.Path, "status", resp.StatusCode,
+		"content_type", resp.Header.Get("Content-Type"), "content_encoding", resp.Header.Get("Content-Encoding"))
 	if info.route.usage != usageNone {
 		resp.Body = newUsageTee(resp.Body, info.route.usage, resp.Header.Get("Content-Type"), func(n int64) {
 			g.addUsage(info.sessionID, n)

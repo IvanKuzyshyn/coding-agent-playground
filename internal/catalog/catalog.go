@@ -116,6 +116,10 @@ func (c *Catalog) Resolve(r Request) (session.Spec, error) {
 	if spec.Image == "" || spec.Limits.TTLSeconds <= 0 || spec.Limits.TokenBudget <= 0 {
 		return session.Spec{}, fmt.Errorf("preset %q: image, ttl_seconds and token_budget are required", name)
 	}
+	// Docker treats a zero limit as unlimited.
+	if spec.Resources.CPUs <= 0 || spec.Resources.MemoryMB <= 0 || spec.Resources.PIDs <= 0 {
+		return session.Spec{}, fmt.Errorf("preset %q: resources.cpus, memory_mb and pids must be positive", name)
+	}
 	return spec, nil
 }
 

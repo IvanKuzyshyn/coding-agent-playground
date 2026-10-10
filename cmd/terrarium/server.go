@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -27,6 +28,10 @@ func runServer(ctx context.Context) error {
 	cfg, err := config.Load[config.Server]()
 	if err != nil {
 		return err
+	}
+	_, sandboxNet, err := net.ParseCIDR(cfg.SandboxSubnet)
+	if err != nil {
+		return fmt.Errorf("TERRARIUM_SANDBOX_SUBNET: %w", err)
 	}
 	key, err := os.ReadFile(cfg.SessionKeyFile)
 	if err != nil {
@@ -52,7 +57,7 @@ func runServer(ctx context.Context) error {
 	log := slog.Default()
 	o := &ops.Ops{
 		Store:     st,
-		Sandboxes: sandbox.NewDocker(cfg.DockerSocket, cfg.SandboxNetwork),
+		Sandboxes: sandbox.NewDocker(cfg.DockerSocket, cfg.SandboxNetwork, cfg.Instance),
 		NewClient: func(endpoint, token string) ops.SandboxAPI {
 			return sandboxclient.New(endpoint, token, nil)
 		},
@@ -68,11 +73,14 @@ func runServer(ctx context.Context) error {
 		Handler: (&api.Server{
 			Store: st, Catalog: cat, Engineers: engineers, SessionKey: key,
 			MaxActive: cfg.MaxActiveSessionsPerOwner, Log: log, EventPoll: 500 * time.Millisecond,
+			DenyNet: sandboxNet,
 		}).Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
 	g, gctx := errgroup.WithContext(ctx)
+	// Request contexts derive from gctx so open SSE streams end when the server shuts down.
+	srv.BaseContext = func(net.Listener) context.Context { return gctx }
 	g.Go(func() error { return sup.Run(gctx) })
 	g.Go(func() error {
 		log.Info("api listening", "addr", cfg.Addr)

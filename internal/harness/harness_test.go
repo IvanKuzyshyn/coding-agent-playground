@@ -48,8 +48,16 @@ func TestParseCodex(t *testing.T) {
 		t.Fatalf("message: %+v", u)
 	}
 	u, _, _ := ParseLine(session.HarnessCodex, []byte(codexDone))
-	if !u.Final || u.Failed || u.Usage.InputTokens != 12926 || u.Usage.CachedInputTokens != 9600 {
+	if !u.Final || u.Failed || u.Usage.ThreadInputTokens != 12926 || u.Usage.ThreadCachedInputTokens != 9600 {
 		t.Fatalf("done: %+v %+v", u, u.Usage)
+	}
+	// Spike S2 totals: turn 1 = 11250 input (9600 cached), 5 output; turn 2 thread totals above.
+	prev := Usage{ThreadInputTokens: 1650, ThreadOutputTokens: 5, ThreadCachedInputTokens: 9600}
+	if got := u.Usage.PerTurn(&prev); got.InputTokens != 11276 || got.OutputTokens != 5 || got.CachedInputTokens != 0 {
+		t.Fatalf("per turn: %+v", got)
+	}
+	if got := u.Usage.PerTurn(nil); got.InputTokens != 12926 {
+		t.Fatalf("first turn: %+v", got)
 	}
 	if u, _, _ := ParseLine(session.HarnessCodex, []byte(codexFailed)); !u.Final || !u.Failed || u.Error != "Fatal error: boom" {
 		t.Fatalf("failed: %+v", u)
@@ -59,7 +67,7 @@ func TestParseCodex(t *testing.T) {
 func TestTurnArgv(t *testing.T) {
 	spec := session.Spec{Harness: session.HarnessClaude, Limits: session.Limits{MaxAgentSteps: 5}}
 	argv := TurnArgv(spec, "-rf /", "sid")
-	if !slices.Contains(argv, "--resume") || argv[2] != "-rf /" || !slices.Contains(argv, "5") {
+	if !slices.Contains(argv, "--resume") || argv[len(argv)-2] != "--" || argv[len(argv)-1] != "-rf /" || !slices.Contains(argv, "5") {
 		t.Errorf("claude argv: %v", argv)
 	}
 	spec.Harness = session.HarnessCodex

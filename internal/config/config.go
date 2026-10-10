@@ -10,6 +10,10 @@ type Server struct {
 	PresetsFile   string `env:"TERRARIUM_PRESETS_FILE" envDefault:"/etc/terrarium/presets.yaml"`
 	// Docker network the sandboxes join. Internal: no route to the internet.
 	SandboxNetwork string `env:"TERRARIUM_SANDBOX_NETWORK" envDefault:"terrarium-sandbox"`
+	// The server joins the sandbox network to reach sandboxd; requests from it are refused.
+	SandboxSubnet string `env:"TERRARIUM_SANDBOX_SUBNET" envDefault:"172.31.250.0/24"`
+	// Label value that scopes orphan cleanup to this deployment's sandboxes.
+	Instance string `env:"TERRARIUM_INSTANCE" envDefault:"local"`
 	// Base URL of the gateway's inference listener as seen from a sandbox.
 	GatewayURL string `env:"TERRARIUM_GATEWAY_URL" envDefault:"http://gateway:8080"`
 	// host:port of the gateway's CONNECT proxy as seen from a sandbox.
