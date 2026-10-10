@@ -20,28 +20,20 @@ RUN apt-get update \
 RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} @openai/codex@${CODEX_VERSION} \
  && npm cache clean --force
 
-# gh and yq (mikefarah; Debian's yq package is a different tool) from pinned releases, verified
-# against the vendors' published SHA-256 checksums.
+# yq (mikefarah; Debian's yq package is a different tool) from a pinned release, verified against
+# the published SHA-256 checksum.
 ARG TARGETARCH
-ARG GH_VERSION=2.102.0
-ARG GH_SHA256_amd64=bb766f710eef8ede859c18578c72c327597cd4c8a85b06001b1f3843c6019386
-ARG GH_SHA256_arm64=7862c86c72f43df3a2d93ddde6f473285b4e2af61b494849846827e513ef6484
 ARG YQ_VERSION=4.54.1
 ARG YQ_SHA256_amd64=8e34fc298390875de416e6a4afcb8cabeceb25d9aa8506c1a2f9353cf702ea5f
 ARG YQ_SHA256_arm64=189088da0c6429ec5178dfaab1a114805f6cab0b61b165ab236efedf1d57a71b
 RUN set -eu; \
-    case "$TARGETARCH" in amd64) gh_sha=$GH_SHA256_amd64 yq_sha=$YQ_SHA256_amd64 ;; \
-                          arm64) gh_sha=$GH_SHA256_arm64 yq_sha=$YQ_SHA256_arm64 ;; \
+    case "$TARGETARCH" in amd64) yq_sha=$YQ_SHA256_amd64 ;; \
+                          arm64) yq_sha=$YQ_SHA256_arm64 ;; \
                           *) echo "unsupported arch $TARGETARCH" >&2; exit 1 ;; esac; \
-    cd /tmp; \
-    curl -fsSLo gh.tar.gz "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_${TARGETARCH}.tar.gz"; \
-    echo "$gh_sha  gh.tar.gz" | sha256sum -c -; \
-    tar -xzf gh.tar.gz; \
-    install -m 0755 "gh_${GH_VERSION}_linux_${TARGETARCH}/bin/gh" /usr/local/bin/gh; \
-    curl -fsSLo yq "https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/yq_linux_${TARGETARCH}"; \
-    echo "$yq_sha  yq" | sha256sum -c -; \
-    install -m 0755 yq /usr/local/bin/yq; \
-    rm -rf /tmp/gh.tar.gz /tmp/gh_* /tmp/yq
+    curl -fsSLo /tmp/yq "https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/yq_linux_${TARGETARCH}"; \
+    echo "$yq_sha  /tmp/yq" | sha256sum -c -; \
+    install -m 0755 /tmp/yq /usr/local/bin/yq; \
+    rm /tmp/yq
 
 # The base image's "node" user holds uid/gid 1000, which the contract assigns to "agent".
 RUN userdel --remove node \

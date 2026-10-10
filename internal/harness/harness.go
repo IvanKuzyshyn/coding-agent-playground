@@ -131,8 +131,8 @@ Only when the user asks you to push or open a pull request:
    one named %s<short-slug> (new branches with other names are rejected). Branches cannot be
    deleted.
 2. git push -u origin <branch>
-3. Open the pull request with the GitHub REST API through the platform gateway. The gh CLI is
-   not authenticated and cannot reach GitHub here, so do not use it:
+3. Open the pull request with the GitHub REST API through the platform gateway (the gh CLI is
+   not installed here):
 
    jq -n --arg title "<title>" --arg body "<body>" --arg head "<branch>" --arg base "<base branch>" \
      '{title: $title, body: $body, head: $head, base: $base, draft: true}' |
