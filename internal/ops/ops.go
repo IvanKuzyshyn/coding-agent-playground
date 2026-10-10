@@ -84,7 +84,7 @@ func (o *Ops) Provision(ctx context.Context, s store.Session) error {
 	if _, err := o.Sandboxes.Create(ctx, sandbox.CreateRequest{
 		SessionID:    s.ID,
 		Image:        s.Spec.Image,
-		Env:          harness.ContainerEnv(s.Spec, o.Gateway, secret),
+		Env:          harness.ContainerEnv(s.ID.String(), s.Spec, o.Gateway, secret),
 		Resources:    s.Spec.Resources,
 		SandboxToken: s.SandboxToken,
 	}); err != nil {
@@ -94,7 +94,7 @@ func (o *Ops) Provision(ctx context.Context, s store.Session) error {
 	if err := waitHealthy(ctx, c, 60*time.Second); err != nil {
 		return err
 	}
-	for _, f := range harness.SetupFiles(s.Spec, o.Gateway, secret, time.Now().UTC().Format(time.RFC3339)) {
+	for _, f := range harness.SetupFiles(s.ID.String(), s.Spec, o.Gateway, secret, time.Now().UTC().Format(time.RFC3339)) {
 		if err := c.PutFile(ctx, f.Path, f.Data, fs.FileMode(f.Mode)); err != nil {
 			return fmt.Errorf("write %s: %w", f.Path, err)
 		}

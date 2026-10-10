@@ -1,6 +1,7 @@
 COMPOSE := docker compose -f deploy/compose.yaml
 # Real credentials come from the macOS keychain into the gateway's compose secret only.
 CLAUDE_TOKEN = $$(security find-generic-password -a "$$USER" -s terrarium-claude-oauth -w 2>/dev/null)
+GITHUB_TOKEN = $$(security find-generic-password -a "$$USER" -s terrarium-github -w 2>/dev/null)
 CODEX_HOME_DIR := $(HOME)/.terrarium/codex
 
 .PHONY: up deps-up down reset migrate logs ps build test vet image-agent token codex-login credentials
@@ -13,7 +14,9 @@ up: image-agent ## Start postgres, server, gateway and web UI
 	$(COMPOSE) stop server
 	$(COMPOSE) run --rm --build migrate
 	@test -f $(HOME)/.terrarium/web.secret || (umask 077 && openssl rand -hex 32 > $(HOME)/.terrarium/web.secret)
-	TERRARIUM_CLAUDE_OAUTH_TOKEN="$(CLAUDE_TOKEN)" TERRARIUM_WEB_SECRET="$$(cat $(HOME)/.terrarium/web.secret)" \
+	TERRARIUM_CLAUDE_OAUTH_TOKEN="$(CLAUDE_TOKEN)" TERRARIUM_GITHUB_TOKEN="$(GITHUB_TOKEN)" \
+	TERRARIUM_GIT_USER_NAME="$$(git config --global user.name)" TERRARIUM_GIT_USER_EMAIL="$$(git config --global user.email)" \
+	TERRARIUM_WEB_SECRET="$$(cat $(HOME)/.terrarium/web.secret)" \
 		$(COMPOSE) up -d --build --wait postgres server gateway web
 
 deps-up: ## Start postgres only

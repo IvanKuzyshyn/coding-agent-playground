@@ -72,6 +72,11 @@ curl -s -XPOST localhost:8080/sessions/$ID/turns -H "$H" -d '{"prompt":"Now try:
 curl -s -XPOST localhost:8080/sessions/$ID/turns/current/stop -H "$H"
 curl -s "localhost:8080/sessions/$ID/events?kind=egress" -H "$H" | jq '.events[].payload'
 curl -s -XDELETE localhost:8080/sessions/$ID -H "$H"
+
+# push and open a PR as you (needs GitHub in `make credentials`); the agent may only push to
+# terrarium/<session-id>/* branches of the session's repo
+curl -s -XPOST localhost:8080/sessions -H "$H" \
+  -d '{"name":"readme fix","harness":"codex","repo":"<you>/<repo>","prompt":"Fix a typo in README.md, push and open a PR."}'
 ```
 
 ## Tests
@@ -85,10 +90,10 @@ TERRARIUM_TEST_DATABASE_URL='postgres://terrarium:terrarium@127.0.0.1:55432/terr
 
 The Go suite covers the state machine and supervisor (crash and reattach, stop, TTL, idle timeout,
 lost sandbox, orphan cleanup, advisory lock), the gateway (token swap, route allowlist, budget,
-usage accounting, Codex refresh, CONNECT allowlist), sandboxd and the API (auth, ownership, limits,
+usage accounting, Codex refresh, CONNECT allowlist, GitHub repository/branch checks), sandboxd and the API (auth, ownership, limits,
 SSE).
 
 ## Not in this prototype
 
-IaC for a real deployment, Kubernetes, microVM isolation, private repositories and PR output,
-MCP surface, mid-turn steering. The threat model and plan describe how they fit.
+IaC for a real deployment, Kubernetes, microVM isolation, per-engineer GitHub credentials (one
+`gh` token for the deployment today), MCP surface, mid-turn steering. The threat model and plan describe how they fit.

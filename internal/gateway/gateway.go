@@ -1,6 +1,7 @@
-// Package gateway holds the real harness credentials. It swaps per-session placeholders for them
-// on an exact allowlist of inference routes, enforces the session token budget, and runs the
-// CONNECT egress proxy. See docs/contracts/gateway.md.
+// Package gateway holds the real harness and GitHub credentials. It swaps per-session
+// placeholders for them on an exact allowlist of inference routes and on git/PR routes for the
+// session's repository, enforces the session token budget, and runs the CONNECT egress proxy.
+// See docs/contracts/gateway.md.
 package gateway
 
 import (
@@ -51,22 +52,29 @@ type Gateway struct {
 	Pricing         *pricing.Table
 	ClaudeTokenFile string
 	CodexAuthFile   string
+	GitHubTokenFile string
 
 	AnthropicBaseURL string
 	CodexBaseURL     string
 	CodexRefreshURL  string
-	// Transport carries upstream inference and Codex refresh requests.
+	GitHubBaseURL    string
+	GitHubAPIBaseURL string
+	// Transport carries upstream inference, GitHub and Codex refresh requests.
 	Transport http.RoundTripper
 	// Dial opens CONNECT tunnels.
 	Dial func(ctx context.Context, network, addr string) (net.Conn, error)
 	Now  func() time.Time
 
-	initOnce  sync.Once
-	claude    *claudeCreds
-	codex     *codexCreds
-	anthropic *url.URL
-	codexBase *url.URL
-	proxy     *httputil.ReverseProxy
+	initOnce      sync.Once
+	claude        *fileToken
+	codex         *codexCreds
+	github        *fileToken
+	anthropic     *url.URL
+	codexBase     *url.URL
+	githubBase    *url.URL
+	githubAPIBase *url.URL
+	proxy         *httputil.ReverseProxy
+	githubProxy   *httputil.ReverseProxy
 }
 
 type route struct {
@@ -109,6 +117,12 @@ func (g *Gateway) init() {
 		if g.CodexRefreshURL == "" {
 			g.CodexRefreshURL = DefaultCodexRefreshURL
 		}
+		if g.GitHubBaseURL == "" {
+			g.GitHubBaseURL = DefaultGitHubBaseURL
+		}
+		if g.GitHubAPIBaseURL == "" {
+			g.GitHubAPIBaseURL = DefaultGitHubAPIBaseURL
+		}
 		if g.Transport == nil {
 			g.Transport = http.DefaultTransport.(*http.Transport).Clone()
 		}
@@ -120,7 +134,10 @@ func (g *Gateway) init() {
 		}
 		g.anthropic = mustParseURL(g.AnthropicBaseURL)
 		g.codexBase = mustParseURL(g.CodexBaseURL)
-		g.claude = &claudeCreds{path: g.ClaudeTokenFile}
+		g.githubBase = mustParseURL(g.GitHubBaseURL)
+		g.githubAPIBase = mustParseURL(g.GitHubAPIBaseURL)
+		g.claude = &fileToken{path: g.ClaudeTokenFile}
+		g.github = &fileToken{path: g.GitHubTokenFile}
 		g.codex = &codexCreds{
 			path:       g.CodexAuthFile,
 			refreshURL: g.CodexRefreshURL,
@@ -134,6 +151,7 @@ func (g *Gateway) init() {
 			ModifyResponse: g.modifyResponse,
 			ErrorHandler:   g.proxyError,
 		}
+		g.githubProxy = g.newGitHubProxy()
 		if _, ok := g.claude.get(); !ok {
 			slog.Warn("claude credential not loaded; claude-code routes return 503 until it is", "file", g.ClaudeTokenFile)
 		}
@@ -157,6 +175,10 @@ func (g *Gateway) Handler() http.Handler {
 func (g *Gateway) serveInference(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet && r.URL.Path == "/healthz" && r.URL.RawPath == "" {
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+		return
+	}
+	if strings.HasPrefix(r.URL.Path, "/github/") {
+		g.serveGitHub(w, r)
 		return
 	}
 	ctx := r.Context()

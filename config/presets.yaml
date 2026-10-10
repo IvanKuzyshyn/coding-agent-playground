@@ -3,8 +3,10 @@
 defaults:
   image: terrarium-agent:local
   resources: { cpus: 2, memory_mb: 4096, pids: 1024 }
+  # CONNECT allowlist. GitHub is not on it: git and PRs go through the gateway's /github/ route,
+  # which is limited to the session's repository.
   network:
-    allow: [github.com, codeload.github.com, registry.npmjs.org, pypi.org, files.pythonhosted.org]
+    allow: [registry.npmjs.org, pypi.org, files.pythonhosted.org]
   # What happens when a turn ends and no follow-up is queued: terminate (end the session, destroy
   # the sandbox) or keep_idle (wait for follow-ups). POST /sessions "keep_idle": true keeps idle
   # on every outcome.
@@ -20,5 +22,5 @@ presets:
 
   # Narrow preset for read-only exploration of a public repository.
   explore:
-    network: { allow: [github.com, codeload.github.com] }
+    network: { allow: [] }
     limits: { max_agent_steps: 30, token_budget: 500000 }

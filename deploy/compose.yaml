@@ -37,6 +37,11 @@ services:
     # Creates sandboxes through the Docker socket. Socket access is root-equivalent on the host;
     # in the real setup this moves to a sandbox runtime API (see threat model).
     user: root
+    environment:
+      <<: *cp-env
+      # Commit identity for agent pushes; `make up` takes it from the host's git config.
+      TERRARIUM_GIT_USER_NAME: ${TERRARIUM_GIT_USER_NAME:-}
+      TERRARIUM_GIT_USER_EMAIL: ${TERRARIUM_GIT_USER_EMAIL:-}
     secrets: [session_key]
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
@@ -53,7 +58,7 @@ services:
     <<: *control-plane
     command: ["gateway"]
     restart: unless-stopped
-    secrets: [claude_oauth_token]
+    secrets: [claude_oauth_token, github_token]
     volumes:
       # Dedicated Codex login owned by the gateway (`make codex-login`). Never the host's ~/.codex.
       - ${HOME}/.terrarium/codex:/var/lib/terrarium/codex
@@ -83,6 +88,9 @@ secrets:
   claude_oauth_token:
     # Filled from the macOS keychain by the Makefile; never written to disk in the repo.
     environment: TERRARIUM_CLAUDE_OAUTH_TOKEN
+  github_token:
+    # From the keychain item `make credentials` writes. Empty: public clones only, no push or PR.
+    environment: TERRARIUM_GITHUB_TOKEN
 
 networks:
   sandbox:

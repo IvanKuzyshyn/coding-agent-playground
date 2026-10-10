@@ -11,6 +11,7 @@ architecture.
 |---|---|---|
 | Claude Max OAuth token | Gateway container only (compose secret from the host keychain) | Sandboxes, logs, the database |
 | Codex ChatGPT login (access + refresh token) | Gateway container only (`~/.terrarium/codex`, a login dedicated to the gateway) | Sandboxes, logs, the database |
+| Engineer's GitHub token | Gateway container only (compose secret from the host keychain, `make credentials`) | Sandboxes, logs, the database |
 | Session key (derives per-session gateway secrets) | Server container only (compose secret) | Sandboxes, gateway, database |
 | Engineer API tokens | Engineer's device; server stores sha256 only; web UI keeps it in an encrypted httpOnly cookie | Browser JS, other engineers |
 | Subscription quota | Upstream vendors | Runaway or hijacked agents |
@@ -41,7 +42,8 @@ prompt-injected agent is equivalent to an attacker with a shell as uid 1000 in t
 | Target | Reachable? | Why |
 |---|---|---|
 | Internet (arbitrary host) | No | `terrarium-sandbox` is an `internal` Docker network: no route, no external DNS. Only the gateway is reachable |
-| Allowlisted hosts (`github.com`, package registries) | Yes, port 443 only | CONNECT proxy with per-session allowlist from the frozen spec |
+| Allowlisted hosts (package registries) | Yes, port 443 only | CONNECT proxy with per-session allowlist from the frozen spec |
+| GitHub | The session's repository only: fetch, push to `terrarium/<session-id>/*`, open a PR from such a branch | Gateway `/github/` route; GitHub is not on the CONNECT allowlist |
 | Real Claude / Codex credentials | No | The sandbox holds placeholders derived from a per-session secret; the gateway swaps them |
 | Inference on the engineer's subscription | Yes, until the session ends or its token budget is spent | The placeholder is a capability for the gateway; it dies with the session |
 | Other sessions' sandboxes | Network yes, control no | Shared network; sandboxd requires a per-sandbox token that agents never see |
@@ -86,7 +88,9 @@ The platform does not try to detect injection; it limits what an injected agent 
 |---|---|---|
 | Arbitrary HTTPS | Default deny | Demonstrated |
 | DNS tunnelling | No external DNS on the internal network | Demonstrated (`getent hosts example.com` fails in the sandbox) |
-| Allowed hosts: `git push` to an attacker repo, gist, `npm publish` | Allowlist by host only today | **Residual risk.** Design: no GitHub credentials in the sandbox at all (anonymous clone only, as now); for write access a GitHub App token scoped to one repo with push only to `terrarium/*` branches, injected by the gateway; package registries through a read-only mirror |
+| `git push` to an attacker repo, gist | GitHub only via the gateway route: the session's repository, `terrarium/<session-id>/*` branches, PR creation only | Demonstrated (live drill: push to `main` and fetch of another repo both `403`, recorded as egress events; gateway tests) |
+| Pushed content on the session's own branch / PR | Visible to everyone who can read the repository; never merged automatically | **Residual risk.** A prompt-injected agent can publish workspace data to its branch or PR body |
+| Allowed hosts: `npm publish` | Allowlist by host only today | **Residual risk.** Design: package registries through a read-only mirror |
 | The model API itself (data in prompts) | Cannot be closed; inference is the product | Residual, documented. Data reaching the vendor is what the engineer already accepts by using the agent |
 | Covert channels via request timing / sizes to allowed hosts | – | Out of scope |
 
@@ -148,3 +152,6 @@ uid 1000.
    limits); one agent can fill the Docker VM disk. Real setup: XFS project quotas or a sized
    block volume per sandbox.
 8. The sandboxd token is visible to operators via `docker inspect` (not to agents).
+9. The GitHub token is the engineer's `gh` OAuth token (`repo` scope on every repository they can
+   reach). The gateway narrows use to one repository and branch prefix, but a gateway compromise
+   exposes the full token. Real setup: a GitHub App user-to-server token per engineer.

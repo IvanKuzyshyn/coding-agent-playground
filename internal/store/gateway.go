@@ -17,6 +17,7 @@ type GatewaySession struct {
 	Status      string
 	Harness     string
 	Allow       []string
+	Repo        string
 	TokenBudget int64
 	TokensUsed  int64
 }
@@ -42,6 +43,7 @@ func (s *Store) GatewaySessionBySecretHash(ctx context.Context, hash []byte) (Ga
 		return g, err
 	}
 	g.Allow = sp.Network.Allow
+	g.Repo = sp.Repo
 	g.TokenBudget = sp.Limits.TokenBudget
 	return g, nil
 }

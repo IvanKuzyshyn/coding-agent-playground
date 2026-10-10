@@ -6,6 +6,7 @@ package harness
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -22,17 +23,44 @@ const (
 type Gateway struct {
 	URL       string // e.g. http://gateway:8080
 	ProxyHost string // e.g. gateway:3128
+	// Commit identity for work pushed through the gateway's GitHub route; empty leaves git's default.
+	GitName  string
+	GitEmail string
+}
+
+// GitHubURL is the sandbox's base URL for the gateway's /github/ route, carrying the placeholder
+// credential git and terrarium-pr authenticate with.
+func GitHubURL(gw Gateway, secret string) string {
+	u, err := url.Parse(gw.URL)
+	if err != nil {
+		return ""
+	}
+	u.User = url.UserPassword(credentials.ProxyUser, secret)
+	u.Path = strings.TrimSuffix(u.Path, "/") + "/github"
+	return u.String()
 }
 
 // ContainerEnv is set once at sandbox creation. It holds placeholders only.
-func ContainerEnv(spec session.Spec, gw Gateway, secret string) map[string]string {
+func ContainerEnv(sessionID string, spec session.Spec, gw Gateway, secret string) map[string]string {
 	proxy := credentials.ProxyURL(gw.ProxyHost, secret)
 	proxyHost, _, _ := strings.Cut(gw.ProxyHost, ":")
+	github := GitHubURL(gw, secret)
 	env := map[string]string{
 		"HTTPS_PROXY": proxy, "https_proxy": proxy,
 		"HTTP_PROXY": proxy, "http_proxy": proxy,
 		"NO_PROXY": proxyHost, "no_proxy": proxyHost,
 		"HOME": Home,
+		// Every github.com remote goes through the gateway, which holds the GitHub token.
+		"GIT_CONFIG_COUNT":        "1",
+		"GIT_CONFIG_KEY_0":        "url." + github + "/.insteadOf",
+		"GIT_CONFIG_VALUE_0":      "https://github.com/",
+		"TERRARIUM_GITHUB_URL":    github,
+		"TERRARIUM_REPO":          spec.Repo,
+		"TERRARIUM_BRANCH_PREFIX": session.BranchPrefix(sessionID),
+	}
+	if gw.GitName != "" && gw.GitEmail != "" {
+		env["GIT_AUTHOR_NAME"], env["GIT_COMMITTER_NAME"] = gw.GitName, gw.GitName
+		env["GIT_AUTHOR_EMAIL"], env["GIT_COMMITTER_EMAIL"] = gw.GitEmail, gw.GitEmail
 	}
 	switch spec.Harness {
 	case session.HarnessClaude:
@@ -53,10 +81,33 @@ type File struct {
 	Mode uint32
 }
 
+// publishGuide is the harness's user-level memory file (CLAUDE.md / AGENTS.md) for sessions with
+// a repository: how to publish work within what the gateway allows.
+func publishGuide(spec session.Spec, sessionID string) string {
+	return fmt.Sprintf(`# Publishing changes
+
+Only when the user asks you to push or open a pull request:
+
+1. Commit on a branch named %s<short-slug> (other branches are rejected).
+2. git push -u origin <branch>
+3. terrarium-pr "<title>" "<body>" opens the pull request on %s.
+
+No other GitHub repository or API is reachable.
+`, session.BranchPrefix(sessionID), spec.Repo)
+}
+
 // SetupFiles returns harness configuration files. lastRefresh is an RFC3339 timestamp.
-func SetupFiles(spec session.Spec, gw Gateway, secret, lastRefresh string) []File {
+func SetupFiles(sessionID string, spec session.Spec, gw Gateway, secret, lastRefresh string) []File {
+	var files []File
+	if spec.Repo != "" {
+		path := Home + "/.claude/CLAUDE.md"
+		if spec.Harness == session.HarnessCodex {
+			path = Home + "/.codex/AGENTS.md"
+		}
+		files = append(files, File{Path: path, Data: []byte(publishGuide(spec, sessionID)), Mode: 0o644})
+	}
 	if spec.Harness != session.HarnessCodex {
-		return nil
+		return files
 	}
 	// Custom provider instead of the built-in "openai": plain HTTP SSE and no
 	// /wham/accounts/check preflight (spikes/s2-codex-swap).
@@ -76,10 +127,10 @@ enabled = false
 [otel]
 metrics_exporter = "none"
 `, gw.URL+"/chatgpt/", gw.URL+"/openai")
-	return []File{
-		{Path: Home + "/.codex/config.toml", Data: []byte(cfg), Mode: 0o600},
-		{Path: Home + "/.codex/auth.json", Data: credentials.CodexAuthJSON(secret, lastRefresh), Mode: 0o600},
-	}
+	return append(files,
+		File{Path: Home + "/.codex/config.toml", Data: []byte(cfg), Mode: 0o600},
+		File{Path: Home + "/.codex/auth.json", Data: credentials.CodexAuthJSON(secret, lastRefresh), Mode: 0o600},
+	)
 }
 
 // TurnArgv builds the command for one turn. harnessSession is empty for the first turn.

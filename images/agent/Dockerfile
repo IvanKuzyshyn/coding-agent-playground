@@ -28,6 +28,7 @@ RUN userdel --remove node \
 
 COPY images/agent/managed-settings.json /etc/claude-code/managed-settings.json
 COPY --from=sandboxd /out/sandboxd /usr/local/bin/sandboxd
+COPY --chmod=755 images/agent/terrarium-pr /usr/local/bin/terrarium-pr
 
 USER agent
 ENV HOME=/home/agent

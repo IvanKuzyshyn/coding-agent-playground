@@ -34,6 +34,7 @@ func runGateway(ctx context.Context) error {
 		Pricing:         prices,
 		ClaudeTokenFile: cfg.ClaudeTokenFile,
 		CodexAuthFile:   cfg.CodexAuthFile,
+		GitHubTokenFile: cfg.GitHubTokenFile,
 	}
 	servers := []*http.Server{
 		{Addr: cfg.Addr, Handler: gw.Handler(), ReadHeaderTimeout: 10 * time.Second},

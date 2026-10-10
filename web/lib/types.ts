@@ -108,7 +108,7 @@ export interface Stats {
 
 export interface EgressPayload {
   decision: "allowed" | "denied";
-  via: "connect" | "inference";
+  via: "connect" | "inference" | "github";
   host: string;
   method?: string;
   path?: string;

@@ -23,15 +23,16 @@ const codexClientID = "app_EMoamEEZ73f0CkXaXp7hrann"
 // refreshBefore is how close to expiry the Codex access token is refreshed proactively.
 const refreshBefore = time.Hour
 
-// claudeCreds holds the Max token. The file is read on first use and re-tried while missing, so
-// the token can be provisioned without restarting the gateway.
-type claudeCreds struct {
+// fileToken holds a token read from a file (the Claude Max token, the GitHub token). The file is
+// read on first use and re-tried while missing, so the token can be provisioned without
+// restarting the gateway.
+type fileToken struct {
 	path  string
 	mu    sync.Mutex
 	token string
 }
 
-func (c *claudeCreds) get() (string, bool) {
+func (c *fileToken) get() (string, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.token == "" && c.path != "" {

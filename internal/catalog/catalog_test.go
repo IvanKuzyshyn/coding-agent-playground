@@ -3,7 +3,6 @@ package catalog
 import (
 	"os"
 	"path/filepath"
-	"slices"
 	"testing"
 )
 
@@ -22,7 +21,7 @@ func TestResolveMergesPresetOverDefaults(t *testing.T) {
 	if spec.Limits.TTLSeconds != 14400 || spec.Image != "terrarium-agent:local" {
 		t.Errorf("defaults not applied: %+v", spec)
 	}
-	if !slices.Equal(spec.Network.Allow, []string{"github.com", "codeload.github.com"}) {
+	if spec.Network.Allow == nil || len(spec.Network.Allow) != 0 {
 		t.Errorf("preset allowlist should replace defaults: %v", spec.Network.Allow)
 	}
 	if spec.CatalogDigest == "" {

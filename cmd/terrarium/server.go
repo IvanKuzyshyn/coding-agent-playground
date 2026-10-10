@@ -61,7 +61,7 @@ func runServer(ctx context.Context) error {
 		NewClient: func(endpoint, token string) ops.SandboxAPI {
 			return sandboxclient.New(endpoint, token, nil)
 		},
-		Gateway:      harness.Gateway{URL: cfg.GatewayURL, ProxyHost: cfg.GatewayProxy},
+		Gateway:      harness.Gateway{URL: cfg.GatewayURL, ProxyHost: cfg.GatewayProxy, GitName: cfg.GitUserName, GitEmail: cfg.GitUserEmail},
 		SessionKey:   key,
 		Log:          log,
 		PollInterval: 500 * time.Millisecond,

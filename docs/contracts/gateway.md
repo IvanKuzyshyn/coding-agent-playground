@@ -14,9 +14,11 @@ Every request carries the per-session secret in one of these forms (`internal/cr
 | Codex inference | `Authorization: Bearer <unsigned JWT with terrarium_secret claim>` | `credentials.SecretFromBearer` |
 | Codex refresh | form/JSON field `refresh_token=terrarium-refresh-<secret>` | `credentials.SecretFromCodexRefreshToken` |
 | CONNECT | `Proxy-Authorization: Basic base64("terrarium:<secret>")` | – |
+| GitHub (`/github/`) | `Authorization: Basic base64("terrarium:<secret>")` | – |
 
 Then `store.GatewaySessionBySecretHash(credentials.Hash(secret))`. Unknown → `403`.
-Inference requires `session.Live(status)`; CONNECT requires `session.EgressAllowed(status)`.
+Inference requires `session.Live(status)`; CONNECT and `/github/` require
+`session.EgressAllowed(status)` (the repository is cloned while provisioning).
 The route's harness must match the session's harness. Never log secrets, bearer values or real
 tokens; log header names only.
 
@@ -51,6 +53,31 @@ streaming the response through, parse usage and call `store.AddTokensUsed` once 
   the final `message_delta.usage.output_tokens`; non-streaming JSON: top-level `usage`.
 - Codex SSE: `response.completed` → `response.usage` (`input_tokens` − `input_tokens_details.cached_tokens` + `output_tokens`).
 Count = uncached input + cache writes + output. Usage parsing must never block or alter the stream.
+
+## GitHub route `/github/` (listener `:8080`)
+
+Sandboxes get `GIT_CONFIG_*` env rewriting `https://github.com/` to
+`http://terrarium:<secret>@gateway:8080/github/`, so every git remote goes through the gateway.
+Only the session's `spec.repo` is reachable (case-insensitive, `.git` optional); upstream paths use
+the spec's spelling.
+
+| Route | Upstream | Checks |
+|---|---|---|
+| `GET /github/{repo}.git/info/refs?service=git-upload-pack` | `https://github.com/{repo}.git/...` | only the `service` query parameter |
+| `POST /github/{repo}.git/git-upload-pack` | same | – |
+| `GET /github/{repo}.git/info/refs?service=git-receive-pack` | same | GitHub token required |
+| `POST /github/{repo}.git/git-receive-pack` | same | Every ref update targets `refs/heads/terrarium/<session-id>/*` and is not a delete; encoded bodies `415` |
+| `POST /github/api/repos/{repo}/pulls` | `https://api.github.com/repos/{repo}/pulls` | JSON `head` starts with `terrarium/<session-id>/` |
+| anything else | – | `403`, egress event `denied` |
+
+- No `Authorization` → `401` with `WWW-Authenticate: Basic` (git only sends credentials after a
+  challenge).
+- Real credential: token string in `TERRARIUM_GITHUB_TOKEN_FILE`. git routes get
+  `Basic base64("x-access-token:<token>")`, the API route `Bearer <token>`.
+- Without a token, fetches are forwarded unauthenticated (public repositories still clone);
+  pushes and PRs → `503`.
+- Pushes and PR creations are recorded as egress events `allowed` (`via: github`, with `refs` or
+  `head`); fetches are not.
 
 ## Listener `:3128` (CONNECT proxy)
 

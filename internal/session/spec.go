@@ -126,3 +126,6 @@ type Limits struct {
 func EgressAllowed(status string) bool {
 	return status == StatusProvisioning || Live(status)
 }
+
+// BranchPrefix is the only branch namespace a session may push to and open pull requests from.
+func BranchPrefix(sessionID string) string { return "terrarium/" + sessionID + "/" }

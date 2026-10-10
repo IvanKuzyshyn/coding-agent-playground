@@ -79,11 +79,40 @@ func TestTurnArgv(t *testing.T) {
 }
 
 func TestContainerEnvHasNoRealSecrets(t *testing.T) {
-	env := ContainerEnv(session.Spec{Harness: session.HarnessClaude}, Gateway{URL: "http://gateway:8080", ProxyHost: "gateway:3128"}, strings.Repeat("a", 64))
+	env := ContainerEnv("sid", session.Spec{Harness: session.HarnessClaude}, Gateway{URL: "http://gateway:8080", ProxyHost: "gateway:3128"}, strings.Repeat("a", 64))
 	if !strings.HasPrefix(env["CLAUDE_CODE_OAUTH_TOKEN"], "sk-ant-oat01-terrarium-") || env["NO_PROXY"] != "gateway" {
 		t.Errorf("env: %v", env)
 	}
 	if _, ok := env["ANTHROPIC_API_KEY"]; ok {
 		t.Error("ANTHROPIC_API_KEY must not be set; it takes precedence over the OAuth token")
+	}
+}
+
+func TestContainerEnvRoutesGitHubThroughGateway(t *testing.T) {
+	secret := strings.Repeat("a", 64)
+	gw := Gateway{URL: "http://gateway:8080", ProxyHost: "gateway:3128", GitName: "Ada", GitEmail: "ada@example.com"}
+	env := ContainerEnv("sid", session.Spec{Harness: session.HarnessCodex, Repo: "octo/hello"}, gw, secret)
+	github := "http://terrarium:" + secret + "@gateway:8080/github"
+	if env["GIT_CONFIG_KEY_0"] != "url."+github+"/.insteadOf" || env["GIT_CONFIG_VALUE_0"] != "https://github.com/" {
+		t.Errorf("git rewrite: %q -> %q", env["GIT_CONFIG_KEY_0"], env["GIT_CONFIG_VALUE_0"])
+	}
+	if env["TERRARIUM_GITHUB_URL"] != github || env["TERRARIUM_REPO"] != "octo/hello" || env["TERRARIUM_BRANCH_PREFIX"] != "terrarium/sid/" {
+		t.Errorf("env: %v", env)
+	}
+	if env["GIT_AUTHOR_EMAIL"] != "ada@example.com" || env["GIT_COMMITTER_NAME"] != "Ada" {
+		t.Errorf("identity: %v", env)
+	}
+}
+
+func TestSetupFilesPublishGuide(t *testing.T) {
+	gw := Gateway{URL: "http://gateway:8080"}
+	for harness, path := range map[string]string{session.HarnessClaude: Home + "/.claude/CLAUDE.md", session.HarnessCodex: Home + "/.codex/AGENTS.md"} {
+		files := SetupFiles("sid", session.Spec{Harness: harness, Repo: "octo/hello"}, gw, strings.Repeat("a", 64), "")
+		if len(files) == 0 || files[0].Path != path || !strings.Contains(string(files[0].Data), "terrarium/sid/") {
+			t.Errorf("%s: %+v", harness, files)
+		}
+		if files := SetupFiles("sid", session.Spec{Harness: harness}, gw, strings.Repeat("a", 64), ""); len(files) > 0 && strings.HasSuffix(files[0].Path, ".md") {
+			t.Errorf("%s: guide written without a repo", harness)
+		}
 	}
 }

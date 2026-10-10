@@ -18,6 +18,9 @@ type Server struct {
 	GatewayURL string `env:"TERRARIUM_GATEWAY_URL" envDefault:"http://gateway:8080"`
 	// host:port of the gateway's CONNECT proxy as seen from a sandbox.
 	GatewayProxy string `env:"TERRARIUM_GATEWAY_PROXY" envDefault:"gateway:3128"`
+	// Commit identity for work agents push to GitHub; empty leaves git's default.
+	GitUserName  string `env:"TERRARIUM_GIT_USER_NAME"`
+	GitUserEmail string `env:"TERRARIUM_GIT_USER_EMAIL"`
 	// Key that derives each session's gateway secret (credentials.DeriveSecret).
 	SessionKeyFile string `env:"TERRARIUM_SESSION_KEY_FILE" envDefault:"/run/secrets/session_key"`
 	DockerSocket   string `env:"TERRARIUM_DOCKER_SOCKET" envDefault:"/var/run/docker.sock"`
@@ -33,6 +36,9 @@ type Gateway struct {
 	ClaudeTokenFile string `env:"TERRARIUM_CLAUDE_TOKEN_FILE" envDefault:"/run/secrets/claude_oauth_token"`
 	// Codex auth.json from a login dedicated to the gateway. Read-write: the gateway is its only refresher.
 	CodexAuthFile string `env:"TERRARIUM_CODEX_AUTH_FILE" envDefault:"/var/lib/terrarium/codex/auth.json"`
+	// File holding the GitHub token pushes and PRs are made with. Optional: without it public repos
+	// still clone, but pushes and PRs are refused.
+	GitHubTokenFile string `env:"TERRARIUM_GITHUB_TOKEN_FILE" envDefault:"/run/secrets/github_token"`
 	// List prices for the API-equivalent cost estimate.
 	PricingFile string `env:"TERRARIUM_PRICING_FILE" envDefault:"/etc/terrarium/pricing.yaml"`
 }
