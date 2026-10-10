@@ -4,6 +4,7 @@
 package credentials
 
 import (
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
@@ -120,4 +121,12 @@ func jwt(claims map[string]any) string {
 	header := enc.EncodeToString([]byte(`{"alg":"none","typ":"JWT"}`))
 	payload, _ := json.Marshal(claims)
 	return header + "." + enc.EncodeToString(payload) + ".terrarium"
+}
+
+// DeriveSecret computes a session's gateway secret from the server key, so the supervisor can
+// rebuild placeholders after a restart while the database stores only the hash.
+func DeriveSecret(key []byte, sessionID string) string {
+	m := hmac.New(sha256.New, key)
+	m.Write([]byte("gateway-secret:" + sessionID))
+	return hex.EncodeToString(m.Sum(nil))
 }

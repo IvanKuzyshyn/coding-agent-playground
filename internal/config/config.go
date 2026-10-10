@@ -14,6 +14,9 @@ type Server struct {
 	GatewayURL string `env:"TERRARIUM_GATEWAY_URL" envDefault:"http://gateway:8080"`
 	// host:port of the gateway's CONNECT proxy as seen from a sandbox.
 	GatewayProxy string `env:"TERRARIUM_GATEWAY_PROXY" envDefault:"gateway:3128"`
+	// Key that derives each session's gateway secret (credentials.DeriveSecret).
+	SessionKeyFile string `env:"TERRARIUM_SESSION_KEY_FILE" envDefault:"/run/secrets/session_key"`
+	DockerSocket   string `env:"TERRARIUM_DOCKER_SOCKET" envDefault:"/var/run/docker.sock"`
 	// Max sessions an engineer may have that are not stopped.
 	MaxActiveSessionsPerOwner int `env:"TERRARIUM_MAX_ACTIVE_SESSIONS" envDefault:"4"`
 }
