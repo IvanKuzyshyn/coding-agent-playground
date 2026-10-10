@@ -19,8 +19,8 @@ let nextEventId = 1;
 const now = () => new Date().toISOString();
 const isActive = (s) => !["stopped", "failed"].includes(s.status);
 
-function emit(s, kind, payload, turnSeq) {
-  const ev = { id: nextEventId++, session_id: s.id, kind, payload, ts: now() };
+function emit(s, kind, payload, turnSeq, ts = now()) {
+  const ev = { id: nextEventId++, session_id: s.id, kind, payload, ts };
   if (turnSeq) ev.turn_seq = turnSeq;
   s.events.push(ev);
 }
@@ -44,15 +44,28 @@ function clearTimers(s) {
   s.timers.clear();
 }
 
+// A session that ended because of an error keeps showing "failed" after cleanup stops it.
+const displayStatus = (s) => (s.failed ? "failed" : s.status);
+
+function durationSeconds(s) {
+  const end = s.ended_at ? Date.parse(s.ended_at) : Date.now();
+  return Math.max(0, Math.round((end - Date.parse(s.created_at)) / 1000));
+}
+
 function view(s, withTurns) {
   const out = {
     id: s.id,
     owner: s.owner,
+    name: s.name,
     status: s.status,
+    display_status: displayStatus(s),
     harness: s.harness,
     preset: s.preset,
     tokens_used: s.tokens_used,
     token_budget: s.token_budget,
+    cost_usd: Math.round(s.cost_usd * 10000) / 10000,
+    cost_complete: s.cost_complete,
+    duration_seconds: durationSeconds(s),
     created_at: s.created_at,
     updated_at: s.updated_at,
     expires_at: s.expires_at,
@@ -66,6 +79,23 @@ function view(s, withTurns) {
 }
 
 // ---- simulation ----
+
+// USD per million tokens (input, cached input, output), like config/pricing.yaml.
+const PRICES = {
+  "claude-code": { input: 3, cached: 0.3, output: 15 },
+  codex: { input: 1.25, cached: 0.125, output: 10 },
+};
+// Models missing from the price table make cost_usd a lower bound.
+const UNPRICED_MODELS = new Set(["experimental-preview"]);
+
+function addCost(s, usage) {
+  if (UNPRICED_MODELS.has(s.model)) {
+    s.cost_complete = false;
+    return;
+  }
+  const p = PRICES[s.harness];
+  s.cost_usd += (usage.input_tokens * p.input + usage.cached_input_tokens * p.cached + usage.output_tokens * p.output) / 1e6;
+}
 
 function claudeScript(s, turn) {
   const sid = s.harnessSession || (s.harnessSession = randomUUID());
@@ -126,8 +156,9 @@ function runTurn(s, turn) {
   delete s.idle_until;
   emit(s, "lifecycle", { turn_status: "running" }, turn.seq);
   const steps = s.harness === "codex" ? codexScript(s, turn) : claudeScript(s, turn);
+  const stepMs = s.stepMs ?? STEP_MS;
   steps.forEach(([kind, payload], i) => {
-    later(s, STEP_MS * (i + 1), () => {
+    later(s, stepMs * (i + 1), () => {
       if (turn.status !== "running") return;
       if (kind !== "result") {
         emit(s, kind, kind === "harness" ? { harness: s.harness, event: payload } : payload, turn.seq);
@@ -140,11 +171,12 @@ function runTurn(s, turn) {
         emit(s, "harness", { harness: "codex", event: { type: "turn.completed", usage: { input_tokens: usage.input_tokens + usage.cached_input_tokens, cached_input_tokens: usage.cached_input_tokens, output_tokens: usage.output_tokens } } }, turn.seq);
       } else {
         const cacheCreation = 15000;
-        emit(s, "harness", { harness: "claude-code", event: { type: "result", subtype: "success", is_error: false, duration_ms: STEP_MS * steps.length, num_turns: usage.agent_steps, result: text, session_id: s.harnessSession, total_cost_usd: 0.0731, usage: { input_tokens: usage.input_tokens - cacheCreation, cache_creation_input_tokens: cacheCreation, output_tokens: usage.output_tokens, cache_read_input_tokens: usage.cached_input_tokens } } }, turn.seq);
+        emit(s, "harness", { harness: "claude-code", event: { type: "result", subtype: "success", is_error: false, duration_ms: stepMs * steps.length, num_turns: usage.agent_steps, result: text, session_id: s.harnessSession, total_cost_usd: 0.0731, usage: { input_tokens: usage.input_tokens - cacheCreation, cache_creation_input_tokens: cacheCreation, output_tokens: usage.output_tokens, cache_read_input_tokens: usage.cached_input_tokens } } }, turn.seq);
       }
       turn.usage = usage;
       turn.result = text;
       s.tokens_used += usage.input_tokens + usage.output_tokens;
+      addCost(s, usage);
       finishTurn(s, turn, "complete");
     });
   });
@@ -172,6 +204,112 @@ function newTurn(s, prompt) {
   const t = { seq: s.turns.length + 1, prompt, status: "queued", usage: { input_tokens: 0, output_tokens: 0, cached_input_tokens: 0, agent_steps: 0 }, created_at: now() };
   s.turns.push(t);
   return t;
+}
+
+// ---- sessions, listing, stats ----
+
+function validateCreate(body) {
+  const name = typeof body.name === "string" ? body.name.trim() : "";
+  if (name.length < 1 || name.length > 120) return "name must be 1-120 characters";
+  if (!["claude-code", "codex"].includes(body.harness)) return "harness must be claude-code or codex";
+  if (!validPrompt(body.prompt)) return "prompt must be non-empty and at most 100 KB";
+  if (body.repo !== undefined && !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(body.repo)) return "repo must be owner/name";
+  const preset = body.preset ?? "default";
+  if (!PRESETS.some((p) => p.name === preset)) return `unknown preset ${preset}`;
+  return "";
+}
+
+function blankSession(owner, body, createdAt) {
+  return {
+    id: randomUUID(), owner, name: body.name.trim(), status: "pending", harness: body.harness, preset: body.preset ?? "default",
+    repo: body.repo, model: body.model, tokens_used: 0, token_budget: TOKEN_BUDGET, cost_usd: 0, cost_complete: true,
+    created_at: createdAt, updated_at: createdAt, expires_at: new Date(Date.parse(createdAt) + SESSION_TTL_MS).toISOString(),
+    turns: [], events: [], timers: new Set(),
+  };
+}
+
+function createSession(owner, body, stepMs) {
+  const s = blankSession(owner, body, now());
+  if (stepMs) s.stepMs = stepMs;
+  sessions.set(s.id, s);
+  emit(s, "lifecycle", { status: "pending", message: "session created" });
+  newTurn(s, body.prompt);
+  provision(s);
+  return s;
+}
+
+const DISPLAY_STATUSES = ["pending", "provisioning", "idle", "running", "stopping", "stopped", "failed"];
+const HARNESSES = ["claude-code", "codex"];
+const SORTS = ["created_at", "duration", "cost", "tokens", "name", "status"];
+
+function listQuery(params) {
+  const csv = (k, allowed) => {
+    const raw = params.get(k);
+    if (raw === null || raw === "") return { values: [] };
+    const values = raw.split(",");
+    const bad = values.find((v) => !allowed.includes(v));
+    return bad ? { error: `unknown ${k} ${bad}` } : { values };
+  };
+  const int = (k, def, min, max) => {
+    const raw = params.get(k);
+    if (raw === null) return def;
+    const n = Number(raw);
+    return Number.isInteger(n) && n >= min && n <= max ? n : NaN;
+  };
+  const status = csv("status", DISPLAY_STATUSES);
+  if (status.error) return status;
+  const harness = csv("harness", HARNESSES);
+  if (harness.error) return harness;
+  const sort = params.get("sort") ?? "created_at";
+  if (!SORTS.includes(sort)) return { error: `unknown sort ${sort}` };
+  const order = params.get("order") ?? "desc";
+  if (!["asc", "desc"].includes(order)) return { error: `unknown order ${order}` };
+  const limit = int("limit", 50, 1, 200);
+  if (Number.isNaN(limit)) return { error: "limit must be 1-200" };
+  const offset = int("offset", 0, 0, Number.MAX_SAFE_INTEGER);
+  if (Number.isNaN(offset)) return { error: "offset must be >= 0" };
+  return { q: (params.get("q") ?? "").toLowerCase(), status: status.values, harness: harness.values, sort, order, limit, offset };
+}
+
+function matches(s, q) {
+  if (q.q && !s.name.toLowerCase().includes(q.q)) return false;
+  if (q.status.length && !q.status.includes(displayStatus(s))) return false;
+  if (q.harness.length && !q.harness.includes(s.harness)) return false;
+  return true;
+}
+
+function comparator(sort, order) {
+  const key = {
+    created_at: (s) => s.created_at,
+    duration: durationSeconds,
+    cost: (s) => s.cost_usd,
+    tokens: (s) => s.tokens_used,
+    name: (s) => s.name.toLowerCase(),
+    // Lifecycle order rather than alphabetical.
+    status: (s) => DISPLAY_STATUSES.indexOf(displayStatus(s)),
+  }[sort];
+  const dir = order === "asc" ? 1 : -1;
+  return (a, b) => {
+    const ka = key(a);
+    const kb = key(b);
+    if (ka < kb) return -dir;
+    if (ka > kb) return dir;
+    return b.created_at.localeCompare(a.created_at) || a.id.localeCompare(b.id);
+  };
+}
+
+function stats(owner) {
+  const mine = [...sessions.values()].filter((s) => s.owner === owner);
+  const count = (pred) => mine.filter(pred).length;
+  const failed = count((s) => displayStatus(s) === "failed");
+  const ended = count((s) => ["stopped", "failed"].includes(displayStatus(s)));
+  return {
+    total: mine.length,
+    running: count((s) => displayStatus(s) === "running"),
+    active: count((s) => !["stopped", "failed"].includes(displayStatus(s))),
+    failed,
+    failure_rate: ended ? Math.round((failed / ended) * 10000) / 10000 : 0,
+  };
 }
 
 // ---- HTTP ----
@@ -234,34 +372,28 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "GET" && url.pathname === "/whoami") return send(res, 200, { name: owner });
   if (req.method === "GET" && url.pathname === "/presets") return send(res, 200, { presets: PRESETS });
 
+  if (req.method === "GET" && url.pathname === "/stats") return send(res, 200, stats(owner));
+
   if (parts[0] !== "sessions") return fail(res, 404, "not found");
 
   if (parts.length === 1) {
     if (req.method === "GET") {
-      const list = [...sessions.values()].filter((s) => s.owner === owner).sort((a, b) => b.created_at.localeCompare(a.created_at));
-      return send(res, 200, { sessions: list.map((s) => view(s, false)) });
+      const q = listQuery(url.searchParams);
+      if (q.error) return fail(res, 400, q.error);
+      const matching = [...sessions.values()].filter((s) => s.owner === owner && matches(s, q)).sort(comparator(q.sort, q.order));
+      return send(res, 200, {
+        sessions: matching.slice(q.offset, q.offset + q.limit).map((s) => view(s, false)),
+        total: matching.length,
+      });
     }
     if (req.method === "POST") {
       const body = await readJSON(req);
       if (!body) return fail(res, 400, "invalid JSON");
-      if (!["claude-code", "codex"].includes(body.harness)) return fail(res, 400, "harness must be claude-code or codex");
-      if (!validPrompt(body.prompt)) return fail(res, 400, "prompt must be non-empty and at most 100 KB");
-      if (body.repo !== undefined && !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(body.repo)) return fail(res, 400, "repo must be owner/name");
-      const preset = body.preset ?? "default";
-      if (!PRESETS.some((p) => p.name === preset)) return fail(res, 400, `unknown preset ${preset}`);
+      const error = validateCreate(body);
+      if (error) return fail(res, 400, error);
       const active = [...sessions.values()].filter((s) => s.owner === owner && isActive(s)).length;
       if (active >= ACTIVE_CAP) return fail(res, 429, `active session limit reached (${ACTIVE_CAP})`);
-      const t = now();
-      const s = {
-        id: randomUUID(), owner, status: "pending", harness: body.harness, preset, repo: body.repo, model: body.model,
-        tokens_used: 0, token_budget: TOKEN_BUDGET, created_at: t, updated_at: t,
-        expires_at: new Date(Date.now() + SESSION_TTL_MS).toISOString(), turns: [], events: [], timers: new Set(),
-      };
-      sessions.set(s.id, s);
-      emit(s, "lifecycle", { status: "pending", message: "session created" });
-      newTurn(s, body.prompt);
-      provision(s);
-      return send(res, 202, view(s, true));
+      return send(res, 202, view(createSession(owner, body), true));
     }
     return fail(res, 405, "method not allowed");
   }
@@ -320,6 +452,118 @@ const server = http.createServer(async (req, res) => {
   }
   return fail(res, 404, "not found");
 });
+
+// ---- seed data ----
+
+// Deterministic so screenshots and checks are reproducible.
+let rngState = 42;
+const rand = () => {
+  rngState = (rngState + 0x6d2b79f5) | 0;
+  let t = Math.imul(rngState ^ (rngState >>> 15), 1 | rngState);
+  t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+  return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+};
+const pick = (a) => a[Math.floor(rand() * a.length)];
+
+const NAMES = [
+  "Fix flaky checkout test", "Upgrade Go to 1.24", "Add rate limiting to webhook handler", "Investigate memory leak in worker",
+  "Refactor auth middleware", "Write migration for user settings", "Triage nightly build failure", "Bump dependencies",
+  "Document the deploy runbook", "Speed up CI cache", "Port CLI flags to cobra", "Add OpenTelemetry spans",
+  "Review PR for pagination bug", "Remove dead feature flags", "Harden CSP headers", "Generate API client from OpenAPI",
+  "Reproduce race in scheduler", "Add retries to S3 uploader", "Clean up logging noise", "Explore sqlite FTS for search",
+];
+const REPOS = ["acme/payments", "acme/web", "acme/infra", "octo/cli", "octo/docs", undefined];
+const FOLLOW_UPS = ["Also add a regression test.", "Address the review comments.", "Run the linter and fix warnings."];
+const FAILURES = [
+  { error: "sandbox provisioning failed: image pull timed out", atProvision: true },
+  { error: "harness exited with status 1: authentication failed", atProvision: false },
+  { error: "turn failed: token budget exceeded", atProvision: false },
+];
+
+function seedPast(owner, i) {
+  const harness = rand() < 0.55 ? "claude-code" : "codex";
+  const body = {
+    name: `${pick(NAMES)}${rand() < 0.3 ? ` #${100 + i}` : ""}`,
+    harness,
+    repo: pick(REPOS),
+    preset: rand() < 0.8 ? "default" : "explore",
+    model: rand() < 0.1 ? "experimental-preview" : undefined,
+  };
+  let t = Date.now() - (i + 1) * (20 + Math.floor(rand() * 90)) * 60_000;
+  const s = blankSession(owner, body, new Date(t).toISOString());
+  sessions.set(s.id, s);
+  const durationMs = (40 + Math.floor(rand() * 1500)) * 1000;
+  const failure = rand() < 0.12 ? pick(FAILURES) : null;
+  const turnCount = 1 + Math.floor(rand() * 3);
+  const stepAt = (ms) => new Date((t += ms)).toISOString();
+  const life = (status, message) => {
+    s.status = status;
+    emit(s, "lifecycle", message ? { status, message } : { status }, undefined, stepAt(200));
+  };
+
+  emit(s, "lifecycle", { status: "pending", message: "session created" }, undefined, s.created_at);
+  life("provisioning", "creating sandbox");
+  for (let n = 1; n <= turnCount; n++) newTurn(s, n === 1 ? `${body.name}.` : pick(FOLLOW_UPS)).created_at = s.created_at;
+  if (!failure?.atProvision) {
+    t += 4000;
+    emit(s, "system", { message: s.repo ? `cloned ${s.repo} into /home/agent/work` : "empty workspace at /home/agent/work" }, undefined, stepAt(500));
+    life("idle", "sandbox ready");
+    const perTurn = durationMs / turnCount;
+    for (const turn of s.turns) {
+      const failing = failure && turn.seq === turnCount;
+      turn.status = "running";
+      turn.started_at = stepAt(300);
+      s.status = "running";
+      emit(s, "lifecycle", { turn_status: "running" }, turn.seq, turn.started_at);
+      const steps = (harness === "codex" ? codexScript(s, turn) : claudeScript(s, turn)).filter(([k]) => k !== "result");
+      const shown = failing ? steps.slice(0, 4) : steps;
+      for (const [kind, payload] of shown) {
+        emit(s, kind, kind === "harness" ? { harness, event: payload } : payload, turn.seq, stepAt(perTurn / (steps.length + 1)));
+      }
+      const usage = { input_tokens: 8000 + Math.floor(rand() * 60000), output_tokens: 400 + Math.floor(rand() * 6000), cached_input_tokens: Math.floor(rand() * 90000), agent_steps: 2 + Math.floor(rand() * 20) };
+      turn.usage = usage;
+      s.tokens_used += usage.input_tokens + usage.output_tokens;
+      addCost(s, usage);
+      turn.ended_at = stepAt(500);
+      if (failing) {
+        turn.status = "failed";
+        turn.error = failure.error;
+        emit(s, "lifecycle", { turn_status: "failed" }, turn.seq, turn.ended_at);
+        break;
+      }
+      turn.status = "complete";
+      turn.result = "Done.";
+      emit(s, "lifecycle", { turn_status: "complete" }, turn.seq, turn.ended_at);
+      s.status = "idle";
+    }
+  }
+  for (const turn of s.turns) {
+    if (turn.status === "queued") {
+      turn.status = "failed";
+      turn.error = `session ended: ${failure ? "failed" : "stopped"}`;
+      turn.ended_at = new Date(t).toISOString();
+    }
+  }
+  if (failure) {
+    s.failed = true;
+    s.error = failure.error;
+    life("failed", failure.error);
+  }
+  life("stopping", "deleting sandbox");
+  life("stopped", "sandbox deleted");
+  s.ended_at = new Date(t).toISOString();
+  s.updated_at = s.ended_at;
+}
+
+function seedSessions() {
+  for (let i = 0; i < 64; i++) seedPast("dev", i);
+  for (let i = 0; i < 3; i++) seedPast("mallory", i);
+  // Live sessions (fill the active cap): a long-running turn, and two that settle to idle.
+  createSession("dev", { name: "Migrate billing cron to queues", harness: "claude-code", prompt: "Migrate the billing cron job to the job queue.", repo: "acme/payments" }, 20_000);
+  createSession("dev", { name: "Audit egress allowlist usage", harness: "codex", prompt: "Find which hosts the build needs.", repo: "acme/infra", model: "experimental-preview" });
+  createSession("dev", { name: "Summarise open issues", harness: "claude-code", prompt: "Summarise the open issues by area." });
+}
+seedSessions();
 
 server.listen(PORT, "127.0.0.1", () => {
   console.log(`terrarium mock API on http://127.0.0.1:${PORT} (token: dev-token)`);
