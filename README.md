@@ -1,11 +1,7 @@
 # Terrarium
 
-> **For learning and demos.** Terrarium is built to run on one developer machine, and some
-> trade-offs keep it simple to run there rather than safe to share: login is by user name only
-> (no password, localhost only), sandboxes are Docker containers sharing the host kernel, the
-> server controls Docker through its socket, and one Claude/ChatGPT subscription and one GitHub
-> token serve every user. See the residual risks in `docs/threat-model.md` before running it
-> anywhere else.
+> **For learning and demos only.** This version makes deliberate trade-offs to stay simple to run on
+> a local machine, and is not meant for production use.
 
 A single-machine prototype of an internal platform for remote coding-agent sessions. An engineer
 starts Claude Code or Codex sessions in isolated, disposable Docker sandboxes, then monitors them,
