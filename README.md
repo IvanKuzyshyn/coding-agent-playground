@@ -6,14 +6,12 @@
 A single-machine prototype of an internal platform for remote coding-agent sessions. An engineer
 starts Claude Code or Codex sessions in isolated, disposable Docker sandboxes, then monitors them,
 sends follow-up prompts, attaches to the live stream and stops them, over an HTTP API, MCP or a
-web UI. Sessions run on the engineer's Claude Max / ChatGPT Plus subscription, and the
-real credentials never enter a sandbox.
+web UI. Sessions run on your own Claude or ChatGPT subscription (one of the two is enough), and
+the real credentials never enter a sandbox.
 
 - Plan and architecture: `docs/plan/local-prototype-plan.md`
 - Threat model (demonstrated vs design-only controls): `docs/threat-model.md`
 - Contracts: `docs/contracts/` (API, sandboxd, gateway)
-- Spikes that proved the credential swap: results in `docs/plan/local-prototype-plan.md` §5.2–5.3
-  (the spike code was removed once `platform/internal/gateway` replaced it)
 
 ```mermaid
 flowchart LR
@@ -24,25 +22,6 @@ flowchart LR
     SB -->|placeholders| GW[gateway: real tokens, CONNECT allowlist]
     GW --> V[Anthropic / OpenAI / allowlisted hosts]
 ```
-
-## What was built vs reused
-
-| Built | Reused |
-|---|---|
-| Go control plane: API, reconcile-loop supervisor, Docker provider, harness adapters (`platform/internal/`) | Claude Code, Codex CLI, yq, jq in the sandbox image (pinned) |
-| Credential-swapping gateway + CONNECT allowlist proxy (`platform/internal/gateway`) | Docker Engine, Postgres, Docker Compose |
-| `sandboxd` in-sandbox exec daemon (`platform/cmd/sandboxd`) | Next.js, pgx, Go stdlib HTTP |
-| Web UI (`web/`) | |
-
-## Layout
-
-| Path | Contents |
-|---|---|
-| `mise.toml` | Required tools (pinned) and every developer command: `mise tasks` |
-| `platform/` | Go module: API server, gateway, sandboxd, credentials CLI (`cmd/`, `internal/`), runtime config (`config/`: presets, prices), sandbox image (`images/agent`) and a Go-only `Makefile` |
-| `web/` | Next.js web UI |
-| `deploy/` | `compose.yaml` and the control-plane `Dockerfile` |
-| `docs/` | Contracts, plan, threat model, drills |
 
 ## Prerequisites
 
@@ -73,46 +52,37 @@ what you have. GitHub is optional.
 ## Setup (once)
 
 ```bash
-# Claude token and GitHub token -> macOS keychain; Codex login -> ~/.terrarium/codex
-# (separate from ~/.codex). Pick the tools, then follow each login.
 mise run credentials
 ```
+
+Pick the accounts you have, then follow each login. The Claude and GitHub tokens go to the macOS
+keychain; the Codex login goes to `~/.terrarium/codex`, separate from your own `~/.codex`.
 
 ## Run
 
 ```bash
-mise run up    # builds images, applies migrations, starts postgres, server, gateway, web
-mise run down  # stop (data is kept); `mise tasks` lists everything else
+mise run up
 ```
+
+This builds the images, applies migrations and starts Postgres, the server, the gateway and the web
+UI. `mise run down` stops everything and keeps the data; `mise tasks` lists the other commands.
 
 - Web UI: http://127.0.0.1:3000. Log in with a user name; a new name creates the user. The user
   menu (top right) copies your API token.
 - API: http://127.0.0.1:8080 (`Authorization: Bearer <token>`), see `docs/contracts/api.md`.
   Interactive docs: http://127.0.0.1:8080/docs (also **API** in the web UI's top bar); spec at
-  `/openapi.yaml`. A token is also returned by `curl -s -XPOST localhost:8080/login -d '{"name":"alice"}'`.
+  `/openapi.yaml`. A token is also returned by
+  `curl -s -XPOST localhost:8080/login -d '{"name":"alice"}'`.
 - Login has no password, so it only works on `localhost` (`TERRARIUM_LOGIN_ALLOWED_HOSTS`, a
   comma-separated list for the server). Never publish the ports on a public interface.
 
-## Demo script (API)
+## Try it
 
-```bash
-T=$(curl -s -XPOST localhost:8080/login -d '{"name":"alice"}' | jq -r .token); H="Authorization: Bearer $T"
-# start a session on a public repo
-ID=$(curl -s -XPOST localhost:8080/sessions -H "$H" \
-  -d '{"name":"explore hello world","harness":"claude-code","repo":"octocat/Hello-World","prompt":"What is this repo?"}' | jq -r .id)
-# attach to the live stream (Ctrl-C to detach; reconnect any time with Last-Event-ID)
-curl -N localhost:8080/sessions/$ID/events -H "$H" -H 'Accept: text/event-stream'
-# follow-up, stop the running turn, inspect egress decisions, delete
-curl -s -XPOST localhost:8080/sessions/$ID/turns -H "$H" -d '{"prompt":"Now try: curl https://example.com"}'
-curl -s -XPOST localhost:8080/sessions/$ID/turns/current/stop -H "$H"
-curl -s "localhost:8080/sessions/$ID/events?kind=egress" -H "$H" | jq '.events[].payload'
-curl -s -XDELETE localhost:8080/sessions/$ID -H "$H"
-
-# push and open a PR as you (needs GitHub in `mise run credentials`); in the session's repo the agent
-# may update existing branches and create new ones named terrarium/<session-id>/*
-curl -s -XPOST localhost:8080/sessions -H "$H" \
-  -d '{"name":"readme fix","harness":"codex","repo":"<you>/<repo>","prompt":"Fix a typo in README.md, push and open a PR."}'
-```
+The web UI's **Examples** page has ten ready-to-run scenarios: exploring a repository, running its
+tests, a follow-up conversation, forbidden egress, the prompt-injection tripwire, looking for
+credentials, other repositories being off limits, a locked-down preset, an agent reporting failure
+and opening a draft PR. Each one is a single paste for bash or zsh that starts a session, waits for
+the agent and prints the result. Pick Claude Code or Codex, depending on the subscription you have.
 
 ## Use it from another agent (MCP)
 
@@ -123,15 +93,30 @@ page has copy-paste setup commands with your token filled in (shown masked, copi
 ## Tests
 
 ```bash
-mise run test  # starts postgres, runs go vet + go test (platform/) and web lint + typecheck
+mise run test
 ```
 
-The Go suite covers the state machine and supervisor (crash and reattach, stop, TTL, idle timeout,
-lost sandbox, orphan cleanup, advisory lock), the gateway (token swap, route allowlist, budget,
-usage accounting, Codex refresh, CONNECT allowlist, GitHub repository/branch checks), sandboxd and the API (auth, ownership, limits,
-SSE).
+This starts Postgres, runs `go vet` and `go test` in `platform/`, and lints and typechecks the web
+UI. The Go suite covers the state machine and supervisor (crash and reattach, stop, TTL, idle
+timeout, lost sandbox, orphan cleanup, advisory lock), the gateway (token swap, route allowlist,
+budget, usage accounting, Codex refresh, CONNECT allowlist, GitHub repository and branch checks),
+sandboxd and the API (auth, ownership, limits, SSE).
 
-## Not in this prototype
+## What was built vs reused
 
-IaC for a real deployment, Kubernetes, microVM isolation, per-engineer GitHub credentials (one
-`gh` token for the deployment today), mid-turn steering. The threat model and plan describe how they fit.
+| Built | Reused |
+|---|---|
+| Go control plane: API, reconcile-loop supervisor, Docker provider, harness adapters (`platform/internal/`) | Claude Code, Codex CLI, yq, jq in the sandbox image (pinned) |
+| Credential-swapping gateway + CONNECT allowlist proxy (`platform/internal/gateway`) | Docker Engine, Postgres, Docker Compose |
+| `sandboxd` in-sandbox exec daemon (`platform/cmd/sandboxd`) | Next.js, pgx, Go stdlib HTTP |
+| Web UI (`web/`) | |
+
+## Layout
+
+| Path | Contents |
+|---|---|
+| `mise.toml` | Required tools (pinned) and every developer command: `mise tasks` |
+| `platform/` | Go module: API server, gateway, sandboxd, credentials CLI (`cmd/`, `internal/`), runtime config (`config/`: presets, prices), sandbox image (`images/agent`) and a Go-only `Makefile` |
+| `web/` | Next.js web UI |
+| `deploy/` | `compose.yaml` and the control-plane `Dockerfile` |
+| `docs/` | Contracts, plan, threat model, drills |
