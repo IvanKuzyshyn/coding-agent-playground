@@ -6,6 +6,7 @@ import { PUBLIC_API_URL } from "@/lib/public-api";
 const LINKS = [
   { href: "/", label: "Runs", key: "runs" },
   { href: "/mcp", label: "MCP", key: "mcp" },
+  { href: "/examples", label: "Examples", key: "examples" },
 ] as const;
 
 export function TopNav({ user, active = "runs" }: { user: string; active?: (typeof LINKS)[number]["key"] }) {
