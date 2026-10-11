@@ -94,10 +94,18 @@ func newToolOutput(harness string, body []byte) string {
 	return sb.String()
 }
 
-// collectText appends every string in a decoded JSON value, skipping image payloads.
+// collectText appends every string in a decoded JSON value, skipping image payloads. A string that
+// is itself a JSON object or array (Codex's shell output) is decoded, so its escapes cannot hide text.
 func collectText(sb *strings.Builder, v any) {
 	switch v := v.(type) {
 	case string:
+		if t := strings.TrimSpace(v); strings.HasPrefix(t, "{") || strings.HasPrefix(t, "[") {
+			var inner any
+			if json.Unmarshal([]byte(t), &inner) == nil {
+				collectText(sb, inner)
+				return
+			}
+		}
 		sb.WriteString(v)
 		sb.WriteByte('\n')
 	case []any:
