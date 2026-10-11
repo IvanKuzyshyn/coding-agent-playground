@@ -20,6 +20,7 @@ type GatewaySession struct {
 	Repo        string
 	TokenBudget int64
 	TokensUsed  int64
+	Guard       string
 }
 
 // GatewaySessionBySecretHash resolves a session from sha256(gateway secret). The gateway must
@@ -45,6 +46,7 @@ func (s *Store) GatewaySessionBySecretHash(ctx context.Context, hash []byte) (Ga
 	g.Allow = sp.Network.Allow
 	g.Repo = sp.Repo
 	g.TokenBudget = sp.Limits.TokenBudget
+	g.Guard = sp.Guard
 	return g, nil
 }
 

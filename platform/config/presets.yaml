@@ -11,6 +11,10 @@ defaults:
   # the sandbox) or keep_idle (wait for follow-ups). POST /sessions "keep_idle": true keeps idle
   # on every outcome.
   lifecycle: { on_complete: terminate, on_failure: terminate, on_stop: keep_idle }
+  # Injection guard on tool output sent to the model: off, monitor (record a flagged egress event)
+  # or block (refuse the inference request). Regex only, so it catches naive payloads; repos that
+  # discuss prompt injection will trip it, which is why the default only records.
+  guard: monitor
   limits:
     max_agent_steps: 50
     token_budget: 2000000

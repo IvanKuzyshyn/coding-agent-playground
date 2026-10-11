@@ -57,7 +57,8 @@ prompt-injected agent is equivalent to an attacker with a shell as uid 1000 in t
 ### 3.1 Prompt injection
 
 An instruction hidden in a repo, issue text or web content makes the agent act for an attacker.
-The platform does not try to detect injection; it limits what an injected agent can do.
+The platform relies on limiting what an injected agent can do. A regex tripwire in the gateway
+flags naive payloads; it is not a boundary.
 
 | Control | Status | Evidence |
 |---|---|---|

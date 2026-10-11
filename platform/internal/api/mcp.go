@@ -171,6 +171,7 @@ type mcpPreset struct {
 	IdleTimeout   int               `json:"idle_timeout_seconds"`
 	TTL           int               `json:"ttl_seconds"`
 	Lifecycle     session.Lifecycle `json:"lifecycle"`
+	Guard         string            `json:"guard" jsonschema:"injection guard on tool output: off, monitor (flag) or block"`
 }
 
 type listOptionsOut struct {
@@ -189,6 +190,7 @@ func (s *Server) mcpListOptions(_ context.Context, _ *mcp.CallToolRequest, _ str
 			Name: n, AllowedHosts: append([]string{}, spec.Network.Allow...),
 			MaxAgentSteps: spec.Limits.MaxAgentSteps, TokenBudget: spec.Limits.TokenBudget,
 			IdleTimeout: spec.Limits.IdleTimeoutSeconds, TTL: spec.Limits.TTLSeconds, Lifecycle: spec.Lifecycle,
+			Guard: spec.Guard,
 		})
 	}
 	return nil, out, nil
