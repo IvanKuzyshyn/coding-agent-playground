@@ -118,7 +118,7 @@ export const EXAMPLES: Example[] = [
     expect: "complete with the URL of a new draft pull request.",
     ownRepo: "your-user/your-repo",
     prompt:
-      "Find one small improvement in README.md (a typo, a broken link or an unclear sentence). Fix it on a new branch, commit, push and open a draft pull request. Reply with the pull request URL.",
+      "Find one small improvement in README.md (a typo, a broken link or an unclear sentence). Fix it on a new branch, commit and push. Then open a draft pull request with the GitHub REST API: POST to $TERRARIUM_GITHUB_URL/api/repos/$TERRARIUM_REPO/pulls with curl, as the publishing section of your instructions shows. Always use the API, even if a gh command is available: the gh CLI is not supported in this sandbox. Reply with the pull request URL.",
   },
 ];
 
@@ -136,8 +136,11 @@ export function exampleScript(ex: Example, harness: Harness, api: string): strin
   if (ex.preset) body.preset = ex.preset;
   if (ex.keepIdle) body.keep_idle = true;
   body.prompt = ex.prompt;
-  // A quoted heredoc keeps the prompt literal; only the own-repo example needs $REPO expanded.
+  // A quoted heredoc keeps the prompt literal. The own-repo example needs $REPO expanded, so its
+  // heredoc is unquoted and every other $ (the prompt names sandbox variables) is escaped.
   const tag = ex.ownRepo ? "JSON" : "'JSON'";
+  let json = JSON.stringify(body, null, 2);
+  if (ex.ownRepo) json = json.replaceAll("$", "\\$").replace('"\\$REPO"', '"$REPO"');
   const wait = (what: string) =>
     `until [ -z "$ID" ] || curl -fsS "$API/sessions/$ID" ${AUTH} | jq -e '${DONE}' >/dev/null; do sleep 5; done\n` +
     `[ -z "$ID" ] || curl -fsS "$API/sessions/$ID" ${AUTH} | jq '{status, error, ${what}}'`;
@@ -146,7 +149,7 @@ export function exampleScript(ex: Example, harness: Harness, api: string): strin
   if (ex.ownRepo) lines.push(`REPO=${ex.ownRepo}`);
   lines.push(
     `R=$(curl -sS -X POST "$API/sessions" ${AUTH} -H "Content-Type: application/json" -d @- <<${tag}`,
-    JSON.stringify(body, null, 2),
+    json,
     "JSON",
     ")",
     // An empty ID (401, 429, validation error) skips the waits instead of polling forever.
