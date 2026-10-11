@@ -1,0 +1,59 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  platform:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: terrarium
+          POSTGRES_PASSWORD: terrarium
+          POSTGRES_DB: terrarium
+        ports: ["55432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U terrarium"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 15
+    env:
+      # Without it the store-backed tests skip instead of failing.
+      TERRARIUM_TEST_DATABASE_URL: postgres://terrarium:terrarium@127.0.0.1:55432/terrarium?sslmode=disable
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-mise
+        with:
+          tools: go
+      - run: make -C platform build vet test
+
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-mise
+        with:
+          tools: node
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm run build
+
+  agent-image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # Only for the pinned CLAUDE_CODE_VERSION and CODEX_VERSION.
+      - uses: ./.github/actions/setup-mise
+      - run: make -C platform image-agent

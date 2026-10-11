@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"os"
 	"testing"
 	"time"
 
@@ -15,22 +14,8 @@ import (
 	"terrarium/internal/credentials"
 	"terrarium/internal/session"
 	"terrarium/internal/store"
+	"terrarium/internal/testutil"
 )
-
-// openTestStore connects to TERRARIUM_TEST_DATABASE_URL (migrated) or skips.
-func openTestStore(t *testing.T) *store.Store {
-	t.Helper()
-	dsn := os.Getenv("TERRARIUM_TEST_DATABASE_URL")
-	if dsn == "" {
-		t.Skip("TERRARIUM_TEST_DATABASE_URL not set")
-	}
-	st, err := store.Open(context.Background(), dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(st.Close)
-	return st
-}
 
 // insertSession adds a session row and removes it (and its events) after the test.
 func insertSession(t *testing.T, st *store.Store, harness, status string, budget, used int64, allow ...string) (string, uuid.UUID) {
@@ -72,7 +57,7 @@ func egressEvents(t *testing.T, st *store.Store, id uuid.UUID) []map[string]any 
 }
 
 func TestStoreBacked(t *testing.T) {
-	st := openTestStore(t)
+	st := testutil.NewStore(t)
 	e := newEnv(t, st, realAccess("a1", time.Now().Add(240*time.Hour)))
 
 	t.Run("claude usage accumulates then budget denies", func(t *testing.T) {
