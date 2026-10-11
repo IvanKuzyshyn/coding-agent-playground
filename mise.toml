@@ -1,0 +1,102 @@
+# Terrarium developer setup. One-time: `mise trust && mise install`; then `mise tasks` lists the
+# commands below. Not managed by mise: Docker Desktop and the macOS keychain (credentials).
+
+[env]
+# Harness versions: installed on the host for the logins (below) and baked into the sandbox
+# image (image-agent), so both always match.
+CLAUDE_CODE_VERSION = "2.1.296"
+CODEX_VERSION = "0.162.1"
+
+[tools]
+go = "1.27"   # same minor as the golang:1.27 build images
+node = "24"   # same major as the node:24 images
+jq = "1.8.2"
+yq = "4.54.1" # mikefarah/yq, same as the sandbox image
+# mise installs npm packages without running their install scripts; Claude Code's script puts the
+# native binary in place, so it runs here.
+"npm:@anthropic-ai/claude-code" = { version = "{{ env.CLAUDE_CODE_VERSION }}", postinstall = 'node "$MISE_TOOL_INSTALL_PATH/node_modules/@anthropic-ai/claude-code/install.cjs"' }
+"npm:@openai/codex" = "{{ env.CODEX_VERSION }}"
+
+# ---- Run the stack -------------------------------------------------------------------------
+
+[tasks.up]
+description = "Build images, apply migrations and start postgres, server, gateway and web UI"
+depends = ["image-agent"]
+run = '''
+set -eu
+compose="docker compose -f deploy/compose.yaml"
+mkdir -p ~/.terrarium/codex
+test -f ~/.terrarium/session.key || (umask 077 && openssl rand -hex 32 > ~/.terrarium/session.key)
+test -f ~/.terrarium/web.secret || (umask 077 && openssl rand -hex 32 > ~/.terrarium/web.secret)
+$compose up -d --wait postgres
+# Old server code must not act on rows whose meaning a migration changes.
+$compose stop server
+$compose run --rm --build migrate
+# Real credentials go from the keychain into the gateway's compose secrets only.
+TERRARIUM_CLAUDE_OAUTH_TOKEN="$(security find-generic-password -a "$USER" -s terrarium-claude-oauth -w 2>/dev/null || true)" \
+TERRARIUM_GITHUB_TOKEN="$(security find-generic-password -a "$USER" -s terrarium-github -w 2>/dev/null || true)" \
+TERRARIUM_GIT_USER_NAME="$(git config --global user.name || true)" \
+TERRARIUM_GIT_USER_EMAIL="$(git config --global user.email || true)" \
+TERRARIUM_WEB_SECRET="$(cat ~/.terrarium/web.secret)" \
+  $compose up -d --build --wait postgres server gateway web
+echo "Web UI: http://127.0.0.1:3000   API docs: http://127.0.0.1:8080/docs"
+'''
+
+[tasks.down]
+description = "Stop the stack (data is kept)"
+run = "docker compose -f deploy/compose.yaml down"
+
+[tasks.reset]
+description = "Stop the stack and delete the database"
+run = "docker compose -f deploy/compose.yaml down -v"
+
+[tasks.logs]
+description = "Follow server and gateway logs"
+run = "docker compose -f deploy/compose.yaml logs -f server gateway"
+
+[tasks.ps]
+description = "Show the stack's containers"
+run = "docker compose -f deploy/compose.yaml ps"
+
+[tasks.migrate]
+description = "Apply database migrations"
+run = "docker compose -f deploy/compose.yaml run --rm --build migrate"
+
+[tasks.db]
+description = "Start postgres only (for tests)"
+run = "docker compose -f deploy/compose.yaml up -d --wait postgres"
+
+[tasks.image-agent]
+description = "Build the sandbox image with the pinned Claude Code and Codex versions"
+run = "make -C platform image-agent"
+
+# ---- Credentials ---------------------------------------------------------------------------
+
+[tasks.credentials]
+description = "Set up Claude, Codex and GitHub credentials (interactive)"
+dir = "platform"
+run = "go run ./cmd/credentials"
+
+[tasks.codex-login]
+description = "Log in to ChatGPT for the gateway's own Codex credential (separate from ~/.codex)"
+run = '''
+mkdir -p ~/.terrarium/codex
+printf 'cli_auth_credentials_store = "file"\n' > ~/.terrarium/codex/config.toml
+CODEX_HOME=~/.terrarium/codex codex login --device-auth
+'''
+
+# ---- Checks --------------------------------------------------------------------------------
+
+[tasks.test]
+description = "Go tests (against a throwaway database) and web lint + typecheck"
+depends = ["db"]
+env = { TERRARIUM_TEST_DATABASE_URL = "postgres://terrarium:terrarium@127.0.0.1:55432/terrarium?sslmode=disable" }
+run = [
+  "make -C platform vet test",
+  "cd web && npm ci --silent && npm run lint && npm run typecheck",
+]
+
+[tasks.web-dev]
+description = "Web UI dev server against the in-memory mock API (no backend needed)"
+dir = "web"
+run = "npm ci --silent && (npm run mock & TERRARIUM_API_URL=http://127.0.0.1:8081 npm run dev)"

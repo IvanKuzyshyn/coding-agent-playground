@@ -1,0 +1,106 @@
+name: terrarium
+
+x-control-plane: &control-plane
+  build:
+    context: ../platform
+    dockerfile: ../deploy/Dockerfile
+  image: terrarium-control-plane:local
+  environment: &cp-env
+    DATABASE_URL: postgres://terrarium:terrarium@postgres:5432/terrarium?sslmode=disable
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: terrarium
+      POSTGRES_PASSWORD: terrarium
+      POSTGRES_DB: terrarium
+    ports: ["127.0.0.1:55432:5432"]
+    volumes: [postgres-data:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "terrarium", "-d", "terrarium"]
+      interval: 2s
+      retries: 30
+
+  migrate:
+    <<: *control-plane
+    command: ["migrate"]
+    depends_on: { postgres: { condition: service_healthy } }
+    restart: "no"
+    profiles: [tools]
+
+  server:
+    <<: *control-plane
+    command: ["server"]
+    # The supervisor exits if it loses its database lock; restart rather than run unsupervised.
+    restart: unless-stopped
+    # Creates sandboxes through the Docker socket. Socket access is root-equivalent on the host;
+    # in the real setup this moves to a sandbox runtime API (see threat model).
+    user: root
+    environment:
+      <<: *cp-env
+      # Commit identity for agent pushes; `make up` takes it from the host's git config.
+      TERRARIUM_GIT_USER_NAME: ${TERRARIUM_GIT_USER_NAME:-}
+      TERRARIUM_GIT_USER_EMAIL: ${TERRARIUM_GIT_USER_EMAIL:-}
+      # Login is by user name only, so it is served only to these hosts (comma-separated).
+      TERRARIUM_LOGIN_ALLOWED_HOSTS: ${TERRARIUM_LOGIN_ALLOWED_HOSTS:-localhost}
+    secrets: [session_key]
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ../platform/config:/etc/terrarium:ro
+    ports: ["127.0.0.1:8080:8080"]
+    networks: [default, sandbox]
+    depends_on: { postgres: { condition: service_healthy } }
+    healthcheck:
+      test: ["CMD", "/terrarium", "healthcheck", "http://127.0.0.1:8080/healthz"]
+      interval: 2s
+      retries: 30
+
+  gateway:
+    <<: *control-plane
+    command: ["gateway"]
+    restart: unless-stopped
+    secrets: [claude_oauth_token, github_token]
+    volumes:
+      # Dedicated Codex login owned by the gateway (`make codex-login`). Never the host's ~/.codex.
+      - ${HOME}/.terrarium/codex:/var/lib/terrarium/codex
+      - ../platform/config/pricing.yaml:/etc/terrarium/pricing.yaml:ro
+    networks: [default, sandbox]
+    depends_on: { postgres: { condition: service_healthy } }
+    healthcheck:
+      test: ["CMD", "/terrarium", "healthcheck", "http://127.0.0.1:8080/healthz"]
+      interval: 2s
+      retries: 30
+
+  web:
+    build: ../web
+    image: terrarium-web:local
+    restart: unless-stopped
+    environment:
+      TERRARIUM_API_URL: http://server:8080
+      # Encrypts the session cookie that carries the engineer's API token; created by `make up`.
+      TERRARIUM_WEB_SECRET: ${TERRARIUM_WEB_SECRET:-}
+    ports: ["127.0.0.1:3000:3000"]
+    depends_on: { server: { condition: service_healthy } }
+
+secrets:
+  session_key:
+    # Derives per-session gateway secrets; created once by `make up`.
+    file: ${HOME}/.terrarium/session.key
+  claude_oauth_token:
+    # Filled from the macOS keychain by the Makefile; never written to disk in the repo.
+    environment: TERRARIUM_CLAUDE_OAUTH_TOKEN
+  github_token:
+    # From the keychain item `make credentials` writes. Empty: public clones only, no push or PR.
+    environment: TERRARIUM_GITHUB_TOKEN
+
+networks:
+  sandbox:
+    name: terrarium-sandbox
+    internal: true
+    # Pinned so the server can refuse API requests from sandboxes (TERRARIUM_SANDBOX_SUBNET).
+    ipam:
+      config: [{ subnet: 172.31.250.0/24 }]
+
+volumes:
+  postgres-data:

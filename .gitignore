@@ -1,0 +1,18 @@
+# Internal screenshots of the reference platform; not for the shared repo
+docs/initial-design/*.png
+
+# Local Claude Code state
+.claude/
+
+# Secrets and local env
+.env
+.env.*
+
+# Go
+platform/bin/
+
+# Next.js
+web/node_modules/
+web/.next/
+web/out/
+

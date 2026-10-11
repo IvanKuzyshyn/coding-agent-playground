@@ -1,0 +1,534 @@
+openapi: 3.1.0
+info:
+  title: Terrarium API
+  version: "1"
+  description: |
+    Run coding agents (Claude Code, Codex) in disposable sandboxes.
+
+    Log in with `POST /login` (or copy your token from the web UI's user menu) and send it as
+    `Authorization: Bearer <token>`. Every user can read every session; only the user who started
+    a session can change it. Lifecycle, listing and event details: `docs/contracts/api.md`.
+servers:
+  - url: /
+security:
+  - bearer: []
+tags:
+  - name: Auth
+  - name: Sessions
+  - name: Turns
+  - name: Events
+  - name: Catalog
+
+paths:
+  /healthz:
+    get:
+      tags: [Catalog]
+      summary: Health check
+      operationId: healthz
+      security: []
+      responses:
+        "200":
+          description: Server is up
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [ok]
+                properties:
+                  ok: { type: boolean }
+
+  /login:
+    post:
+      tags: [Auth]
+      summary: Log in by user name
+      description: |
+        Creates the user on first use and returns their API token; the same name always gets the
+        same token. There is no password, so the server answers only for allowed hosts
+        (`TERRARIUM_LOGIN_ALLOWED_HOSTS`, default `localhost`).
+      operationId: login
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [name]
+              properties:
+                name:
+                  type: string
+                  description: Lowercased; 1-39 of a-z 0-9 . _ - starting with a letter or digit.
+                  examples: [ivan.kuzyshyn]
+      responses:
+        "200":
+          description: Logged in
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [name, token, created]
+                properties:
+                  name: { type: string }
+                  token: { type: string, description: "API token (trm_...)" }
+                  created: { type: boolean, description: True when this login created the user. }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403":
+          description: Login is not allowed from this host
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /whoami:
+    get:
+      tags: [Auth]
+      summary: Current user
+      operationId: whoami
+      responses:
+        "200":
+          description: The token's user
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [name]
+                properties:
+                  name: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /presets:
+    get:
+      tags: [Catalog]
+      summary: List presets
+      operationId: listPresets
+      responses:
+        "200":
+          description: Preset names accepted by POST /sessions
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [presets]
+                properties:
+                  presets:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: false
+                      required: [name]
+                      properties:
+                        name: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /sessions:
+    get:
+      tags: [Sessions]
+      summary: List sessions
+      description: Every user's sessions unless `owner` is given.
+      operationId: listSessions
+      parameters:
+        - $ref: "#/components/parameters/Q"
+        - $ref: "#/components/parameters/Owner"
+        - $ref: "#/components/parameters/StatusFilter"
+        - $ref: "#/components/parameters/HarnessFilter"
+        - name: sort
+          in: query
+          schema:
+            type: string
+            enum: [created_at, duration, cost, tokens, name, status]
+            default: created_at
+        - name: order
+          in: query
+          schema: { type: string, enum: [asc, desc], default: desc }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+        - name: offset
+          in: query
+          schema: { type: integer, minimum: 0, default: 0 }
+      responses:
+        "200":
+          description: One page of sessions, without turns
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [sessions, total]
+                properties:
+                  sessions:
+                    type: array
+                    items: { $ref: "#/components/schemas/Session" }
+                  total: { type: integer, description: Sessions matching the filters. }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      tags: [Sessions]
+      summary: Create a session
+      description: |
+        Creates a sandbox and queues the first turn. By default the session ends when the agent
+        finishes; `keep_idle: true` keeps the sandbox for follow-ups.
+      operationId: createSession
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateSession" }
+      responses:
+        "202":
+          description: Created; provisioning starts in the background
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Session" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "429":
+          description: The user's active-session limit is reached
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /stats:
+    get:
+      tags: [Sessions]
+      summary: Aggregate statistics
+      description: Totals over the sessions matching the same filters as GET /sessions.
+      operationId: getStats
+      parameters:
+        - $ref: "#/components/parameters/Q"
+        - $ref: "#/components/parameters/Owner"
+        - $ref: "#/components/parameters/StatusFilter"
+        - $ref: "#/components/parameters/HarnessFilter"
+      responses:
+        "200":
+          description: Statistics
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Stats" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /sessions/{id}:
+    parameters:
+      - $ref: "#/components/parameters/SessionID"
+    get:
+      tags: [Sessions]
+      summary: Get a session
+      operationId: getSession
+      responses:
+        "200":
+          description: The session with its turns
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Session" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      tags: [Sessions]
+      summary: Terminate a session
+      description: |
+        Ends the session and destroys its sandbox. The final status comes from the last finished
+        turn. Only the session's owner may.
+      operationId: deleteSession
+      responses:
+        "202":
+          description: Stopping
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Session" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/NotOwner" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /sessions/{id}/turns:
+    parameters:
+      - $ref: "#/components/parameters/SessionID"
+    post:
+      tags: [Turns]
+      summary: Send a follow-up prompt
+      description: Queued behind a running turn. Only the session's owner may.
+      operationId: createTurn
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [prompt]
+              properties:
+                prompt: { type: string, description: "Non-empty, at most 100 KB." }
+      responses:
+        "202":
+          description: Queued
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Turn" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/NotOwner" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: The session is not accepting turns
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /sessions/{id}/turns/current/stop:
+    parameters:
+      - $ref: "#/components/parameters/SessionID"
+    post:
+      tags: [Turns]
+      summary: Stop the running turn
+      description: Only the session's owner may.
+      operationId: stopTurn
+      responses:
+        "202":
+          description: Stop requested
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: false }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/NotOwner" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: No turn is running
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /sessions/{id}/events:
+    parameters:
+      - $ref: "#/components/parameters/SessionID"
+    get:
+      tags: [Events]
+      summary: Session events
+      description: |
+        JSON page by default. With `Accept: text/event-stream` it is a live SSE stream (`id`,
+        `event` = kind, `data` = Event JSON) that resumes from `Last-Event-ID` and ends when the
+        session ends.
+      operationId: listEvents
+      parameters:
+        - name: after
+          in: query
+          description: Only events with a larger id.
+          schema: { type: integer, minimum: 0, default: 0 }
+        - name: kind
+          in: query
+          schema: { $ref: "#/components/schemas/EventKind" }
+        - name: limit
+          in: query
+          description: JSON only; values above 1000 are capped.
+          schema: { type: integer, minimum: 0, default: 500 }
+        - name: Last-Event-ID
+          in: header
+          description: SSE only; resume after this event id.
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Events
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [events, next_after]
+                properties:
+                  events:
+                    type: array
+                    items: { $ref: "#/components/schemas/Event" }
+                  next_after: { type: integer, description: Pass as `after` to get the next page. }
+            text/event-stream:
+              schema: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+components:
+  securitySchemes:
+    bearer:
+      type: http
+      scheme: bearer
+      description: The user's API token from POST /login or the web UI's user menu.
+
+  parameters:
+    SessionID:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    Q:
+      name: q
+      in: query
+      description: Case-insensitive substring of the name.
+      schema: { type: string }
+    Owner:
+      name: owner
+      in: query
+      description: Only sessions started by this user.
+      schema: { type: string }
+    StatusFilter:
+      name: status
+      in: query
+      description: "Comma-separated statuses, e.g. `complete,failed`."
+      schema: { type: string }
+    HarnessFilter:
+      name: harness
+      in: query
+      description: "Comma-separated harnesses: `claude-code`, `codex`."
+      schema: { type: string }
+
+  responses:
+    BadRequest:
+      description: Invalid input
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Unauthorized:
+      description: Missing or unknown token
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    NotOwner:
+      description: Only the session's owner can change it
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    NotFound:
+      description: No such session
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+
+  schemas:
+    Error:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error: { type: string }
+
+    SessionStatus:
+      type: string
+      enum: [pending, provisioning, idle, running, stopping, complete, failed, stopped]
+
+    Harness:
+      type: string
+      enum: [claude-code, codex]
+
+    LifecycleAction:
+      type: string
+      enum: [terminate, keep_idle]
+
+    Lifecycle:
+      type: object
+      additionalProperties: false
+      required: [on_complete, on_failure, on_stop]
+      properties:
+        on_complete: { $ref: "#/components/schemas/LifecycleAction" }
+        on_failure: { $ref: "#/components/schemas/LifecycleAction" }
+        on_stop: { $ref: "#/components/schemas/LifecycleAction" }
+
+    CreateSession:
+      type: object
+      additionalProperties: false
+      required: [name, harness, prompt]
+      properties:
+        name: { type: string, description: "1-120 characters; need not be unique." }
+        harness: { $ref: "#/components/schemas/Harness" }
+        prompt: { type: string, description: "The task; non-empty, at most 100 KB." }
+        repo: { type: string, description: "GitHub repository owner/name to clone.", examples: [octocat/Hello-World] }
+        preset: { type: string, description: From GET /presets; default `default`. }
+        model: { type: string, description: Model override for the harness. }
+        keep_idle: { type: boolean, default: false, description: Keep the sandbox for follow-ups after each turn. }
+
+    Session:
+      type: object
+      additionalProperties: false
+      required:
+        [id, owner, name, status, display_status, harness, preset, lifecycle, tokens_used, token_budget,
+         cost_usd, cost_complete, duration_seconds, created_at, updated_at, expires_at, turn_count]
+      properties:
+        id: { type: string, format: uuid }
+        owner: { type: string, description: The user who started it; only they can change it. }
+        name: { type: string }
+        status: { $ref: "#/components/schemas/SessionStatus" }
+        display_status: { $ref: "#/components/schemas/SessionStatus" }
+        harness: { $ref: "#/components/schemas/Harness" }
+        preset: { type: string }
+        lifecycle: { $ref: "#/components/schemas/Lifecycle" }
+        repo: { type: string }
+        model: { type: string }
+        tokens_used: { type: integer }
+        token_budget: { type: integer }
+        cost_usd: { type: number, description: API-equivalent cost estimate. }
+        cost_complete: { type: boolean, description: False if a model was unpriced (cost is a lower bound). }
+        duration_seconds: { type: integer }
+        error: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+        idle_until: { type: string, format: date-time }
+        ended_at: { type: string, format: date-time }
+        turn_count: { type: integer }
+        current_turn: { type: integer, description: Seq of the queued or running turn. }
+        turns:
+          type: array
+          description: Only on GET /sessions/{id}.
+          items: { $ref: "#/components/schemas/Turn" }
+
+    Turn:
+      type: object
+      additionalProperties: false
+      required: [seq, prompt, status, created_at]
+      properties:
+        seq: { type: integer }
+        prompt: { type: string }
+        status:
+          type: string
+          enum: [queued, running, complete, failed, stopped, limit_exceeded]
+        result: { type: string }
+        error: { type: string }
+        usage:
+          type: object
+          description: Token usage of this turn (Codex also reports thread totals).
+          properties:
+            input_tokens: { type: integer }
+            output_tokens: { type: integer }
+            cached_input_tokens: { type: integer }
+            agent_steps: { type: integer }
+        created_at: { type: string, format: date-time }
+        started_at: { type: string, format: date-time }
+        ended_at: { type: string, format: date-time }
+
+    EventKind:
+      type: string
+      enum: [lifecycle, harness, stderr, egress, system]
+
+    Event:
+      type: object
+      additionalProperties: false
+      required: [id, session_id, kind, payload, ts]
+      properties:
+        id: { type: integer }
+        session_id: { type: string, format: uuid }
+        kind: { $ref: "#/components/schemas/EventKind" }
+        turn_seq: { type: integer }
+        payload: { type: object, description: Kind-specific; see docs/contracts/api.md. }
+        ts: { type: string, format: date-time }
+
+    Stats:
+      type: object
+      additionalProperties: false
+      required: [total, running, active, failed, failure_rate, total_cost_usd, cost_complete]
+      properties:
+        total: { type: integer }
+        running: { type: integer }
+        active: { type: integer, description: Not yet ended. }
+        failed: { type: integer }
+        failure_rate: { type: number, description: Failed / ended sessions. }
+        total_cost_usd: { type: number }
+        cost_complete: { type: boolean }
