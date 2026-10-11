@@ -1,12 +1,14 @@
 # Terrarium
 
+> **For learning and demos only.** This version makes deliberate trade-offs to stay simple to run on
+> a local machine, and is not meant for production use.
+
 A single-machine prototype of an internal platform for remote coding-agent sessions. An engineer
 starts Claude Code or Codex sessions in isolated, disposable Docker sandboxes, then monitors them,
-sends follow-up prompts, attaches to the live stream and stops them from any device, over an HTTP
-API or a web UI. Sessions run on the engineer's Claude Max / ChatGPT Plus subscription, and the
+sends follow-up prompts, attaches to the live stream and stops them, over an HTTP API, MCP or a
+web UI. Sessions run on the engineer's Claude Max / ChatGPT Plus subscription, and the
 real credentials never enter a sandbox.
 
-- Requirements: `docs/initial-requirements/requirements.txt`
 - Plan and architecture: `docs/plan/local-prototype-plan.md`
 - Threat model (demonstrated vs design-only controls): `docs/threat-model.md`
 - Contracts: `docs/contracts/` (API, sandboxd, gateway)
@@ -44,13 +46,29 @@ flowchart LR
 
 ## Prerequisites
 
-macOS with Docker Desktop, [mise](https://mise.jdx.dev), and a Claude Max and/or ChatGPT Plus
-subscription; optionally `gh` (GitHub access for agents). mise installs everything else, with
-Claude Code and Codex at the same versions as the sandbox image:
+**Install yourself** (everything else comes from mise):
+
+- macOS (credentials are kept in the macOS keychain)
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/), running
+- [mise](https://mise.jdx.dev) (`brew install mise`)
+
+Then, in the repository, let mise install the pinned tools: Go, Node, jq, yq, and Claude Code and
+Codex at the same versions as the sandbox image:
 
 ```bash
 mise trust && mise install
 ```
+
+**Accounts.** Terrarium runs both Claude Code and Codex, but one of them is enough; configure only
+what you have. GitHub is optional.
+
+| Account | Enables | Without it |
+|---|---|---|
+| Claude subscription (Max) | Sessions with `"harness": "claude-code"` | Those sessions fail; Codex sessions still work |
+| ChatGPT subscription (Plus or higher) | Sessions with `"harness": "codex"` | Those sessions fail; Claude Code sessions still work |
+| GitHub (`gh` logged in, or a fine-grained token), optional | Agents pushing branches and opening PRs on your behalf; private repositories | Public repositories still clone; pushes and PRs are refused |
+
+`mise run credentials` (next step) lets you pick just the accounts you have.
 
 ## Setup (once)
 

@@ -1,6 +1,3 @@
-# Internal screenshots of the reference platform; not for the shared repo
-docs/initial-design/*.png
-
 # Local Claude Code state
 .claude/
 

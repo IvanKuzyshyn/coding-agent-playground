@@ -67,3 +67,22 @@ func TestResolveRejectsUnknownLifecycleAction(t *testing.T) {
 	_, err = c.Resolve(Request{Harness: "codex"})
 	g.Expect(err).To(HaveOccurred(), "unknown lifecycle action accepted")
 }
+
+func TestResolveGuard(t *testing.T) {
+	g := NewWithT(t)
+	c, err := Load(filepath.Join("..", "..", "config", "presets.yaml"))
+	g.Expect(err).NotTo(HaveOccurred())
+	spec, err := c.Resolve(Request{Harness: "codex"})
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(spec.Guard).To(Equal("monitor"), "default guard")
+
+	p := filepath.Join(t.TempDir(), "p.yaml")
+	g.Expect(os.WriteFile(p, []byte("defaults:\n  image: i\n  resources: { cpus: 1, memory_mb: 1, pids: 1 }\n  limits: { token_budget: 1, ttl_seconds: 1 }\n  lifecycle: { on_complete: terminate, on_failure: terminate, on_stop: terminate }\n  guard: monitor\npresets:\n  default: {}\n  strict: { guard: block }\n  bad: { guard: loud }\n"), 0o600)).To(Succeed())
+	c, err = Load(p)
+	g.Expect(err).NotTo(HaveOccurred())
+	spec, err = c.Resolve(Request{Harness: "codex", Preset: "strict"})
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(spec.Guard).To(Equal("block"), "preset guard overrides default")
+	_, err = c.Resolve(Request{Harness: "codex", Preset: "bad"})
+	g.Expect(err).To(MatchError(ContainSubstring("guard")), "unknown guard mode accepted")
+}

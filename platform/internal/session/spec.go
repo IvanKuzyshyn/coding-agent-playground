@@ -85,6 +85,16 @@ func FinalStatus(turnStatus string) string {
 
 func ValidAction(a string) bool { return a == ActionTerminate || a == ActionKeepIdle }
 
+// Injection guard modes: what the gateway does when new tool output in an inference request
+// matches an injection rule.
+const (
+	GuardOff     = "off"
+	GuardMonitor = "monitor" // record a flagged egress event and forward the request
+	GuardBlock   = "block"   // record a denied egress event and refuse the request
+)
+
+func ValidGuard(m string) bool { return m == GuardOff || m == GuardMonitor || m == GuardBlock }
+
 // Spec is frozen when a session is created. The supervisor and gateway read only the Spec,
 // never the catalog, so catalog edits affect only new sessions.
 type Spec struct {
@@ -98,6 +108,7 @@ type Spec struct {
 	Network       Network   `json:"network"`
 	Limits        Limits    `json:"limits"`
 	Lifecycle     Lifecycle `json:"lifecycle"`
+	Guard         string    `json:"guard,omitempty"` // injection guard mode; empty (sessions created before it) is off
 	CatalogDigest string    `json:"catalog_digest"`
 }
 

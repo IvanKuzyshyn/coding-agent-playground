@@ -17,7 +17,7 @@ The server exposes the session operations of the [HTTP API](api.md) as MCP tools
 
 | Tool | Input | Output |
 |---|---|---|
-| `list_options` | – | `harnesses`; `presets[]` with `allowed_hosts`, `max_agent_steps`, `token_budget`, `idle_timeout_seconds`, `ttl_seconds`, `lifecycle` |
+| `list_options` | – | `harnesses`; `presets[]` with `allowed_hosts`, `max_agent_steps`, `token_budget`, `idle_timeout_seconds`, `ttl_seconds`, `lifecycle`, `guard` |
 | `create_session` | `name`, `harness`, `prompt`, `repo`?, `preset`?, `model`?, `keep_idle`? (as `POST /sessions`) | Session |
 | `get_session` | `id`, `include_events`? (last 25 lifecycle and 25 egress events), `max_result_chars`? (default 4000) | Session with `turns` |
 | `wait_for_session` | `id`, `timeout_seconds`? (default 120, max 600), `max_result_chars`? | Session with `turns`; `timed_out: true` if it had not settled. Settled = terminal, or `idle` with no queued turn |

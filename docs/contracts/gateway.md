@@ -54,6 +54,18 @@ streaming the response through, parse usage and call `store.AddTokensUsed` once 
 - Codex SSE: `response.completed` → `response.usage` (`input_tokens` − `input_tokens_details.cached_tokens` + `output_tokens`).
 Count = uncached input + cache writes + output. Usage parsing must never block or alter the stream.
 
+**Injection guard:** on priced routes (`/anthropic/v1/messages`, `/openai/responses`), when
+`spec.guard` is `monitor` or `block`, scan the tool output that is new in this request: Claude's
+`tool_result` blocks after the last `assistant` message (Claude Code appends `system` messages
+after them), Codex's trailing
+`*_call_output` input items. Earlier history was scanned when it was new. Normalize (lowercase,
+drop Unicode format characters, collapse whitespace) and match the rules in
+`internal/gateway/guard.go` (`override`, `prompt_leak`, `mode_switch`, `chat_markup`,
+`outcome_marker`). On a match record egress event `{decision, via: inference, reason: injection,
+rules, excerpt}`: `monitor` → `flagged`, request forwarded unchanged; `block` → `denied`, `403`
+`{"error":"request blocked by injection guard"}`. `off` or empty (older sessions) skips the scan.
+The guard is a tripwire for naive payloads, not a boundary.
+
 ## GitHub route `/github/` (listener `:8080`)
 
 Sandboxes get `GIT_CONFIG_*` env rewriting `https://github.com/` to

@@ -35,6 +35,7 @@ type preset struct {
 		TTLSeconds         int   `yaml:"ttl_seconds"`
 	} `yaml:"limits"`
 	Instructions string `yaml:"instructions"`
+	Guard        string `yaml:"guard"`
 	Lifecycle    struct {
 		OnComplete string `yaml:"on_complete"`
 		OnFailure  string `yaml:"on_failure"`
@@ -120,6 +121,7 @@ func (c *Catalog) Resolve(r Request) (session.Spec, error) {
 			OnFailure:  pick(p.Lifecycle.OnFailure, d.Lifecycle.OnFailure),
 			OnStop:     pick(p.Lifecycle.OnStop, d.Lifecycle.OnStop),
 		},
+		Guard:         pick(p.Guard, d.Guard),
 		CatalogDigest: c.digest,
 	}
 	if r.KeepIdle {
@@ -129,6 +131,9 @@ func (c *Catalog) Resolve(r Request) (session.Spec, error) {
 		if !session.ValidAction(a) {
 			return session.Spec{}, fmt.Errorf("preset %q: lifecycle actions must be %q or %q, got %q", name, session.ActionTerminate, session.ActionKeepIdle, a)
 		}
+	}
+	if !session.ValidGuard(spec.Guard) {
+		return session.Spec{}, fmt.Errorf("preset %q: guard must be %q, %q or %q, got %q", name, session.GuardOff, session.GuardMonitor, session.GuardBlock, spec.Guard)
 	}
 	if p.Network.Allow != nil {
 		spec.Network.Allow = p.Network.Allow

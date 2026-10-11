@@ -256,6 +256,16 @@ func (g *Gateway) serveInference(w http.ResponseWriter, r *http.Request) {
 			info.body = body
 		}
 		info.model = requestModel(body)
+		if s.Guard == session.GuardMonitor || s.Guard == session.GuardBlock {
+			if hits := scanInference(rt.harness, body); len(hits) > 0 {
+				blocked := s.Guard == session.GuardBlock
+				g.flagInjection(ctx, s.ID, r, hits, blocked)
+				if blocked {
+					writeError(w, http.StatusForbidden, "request blocked by injection guard")
+					return
+				}
+			}
+		}
 		r.Body = io.NopCloser(bytes.NewReader(body))
 		r.ContentLength = int64(len(body))
 		r.TransferEncoding = nil
@@ -299,6 +309,29 @@ func (g *Gateway) denyInference(ctx context.Context, id uuid.UUID, r *http.Reque
 		"method":   r.Method,
 		"path":     truncate(r.URL.Path),
 		"reason":   reason,
+	})
+}
+
+// flagInjection records guard hits: "flagged" when the request is still forwarded, "denied" when
+// it is refused.
+func (g *Gateway) flagInjection(ctx context.Context, id uuid.UUID, r *http.Request, hits []guardHit, blocked bool) {
+	decision := "flagged"
+	if blocked {
+		decision = "denied"
+	}
+	rules := make([]string, len(hits))
+	for i, h := range hits {
+		rules[i] = h.Rule
+	}
+	slog.Warn("injection guard", "session", id, "decision", decision, "rules", rules)
+	g.event(ctx, id, map[string]any{
+		"decision": decision,
+		"via":      "inference",
+		"method":   r.Method,
+		"path":     truncate(r.URL.Path),
+		"reason":   "injection",
+		"rules":    rules,
+		"excerpt":  hits[0].Excerpt,
 	})
 }
 

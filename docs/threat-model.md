@@ -57,7 +57,8 @@ prompt-injected agent is equivalent to an attacker with a shell as uid 1000 in t
 ### 3.1 Prompt injection
 
 An instruction hidden in a repo, issue text or web content makes the agent act for an attacker.
-The platform does not try to detect injection; it limits what an injected agent can do.
+The platform relies on limiting what an injected agent can do. A regex tripwire in the gateway
+flags naive payloads; it is not a boundary.
 
 | Control | Status | Evidence |
 |---|---|---|
@@ -66,6 +67,7 @@ The platform does not try to detect injection; it limits what an injected agent 
 | Egress decisions visible to the engineer | Demonstrated | `GET /sessions/{id}/events?kind=egress`, web UI Egress panel (verified in a headless browser against the real stack). Codex's routine auxiliary calls are denied without an event so real attempts stand out |
 | Per-session token budget and step cap | Demonstrated (unit + integration tests) | Gateway `429` after budget; supervisor ends the turn `limit_exceeded`; Claude `--max-turns` |
 | Agent cannot widen its own permissions | Demonstrated | Spec frozen at creation; gateway and supervisor read only the frozen spec |
+| Injection tripwire on tool output | Demonstrated (unit + live) | Gateway scans new tool output in each inference request (`internal/gateway/guard.go`). Live, both harnesses: a `cat`-ed "ignore all previous instructions" file, including one split across lines, is recorded as egress event `flagged` (`monitor`, default) or refused with `403` and the turn fails (`block`); the dotfiles repo read end to end raised no flags. Regex only: paraphrase, other languages or encodings get through |
 | Tool-level deny rules (e.g. WebFetch) | Demonstrated | `/etc/claude-code/managed-settings.json` in the image |
 | Output review: agent changes land only as PRs | Design | §3.4 |
 | Task outcome is self-reported | Residual | A turn is `failed` when the agent ends its reply with `TERRARIUM_OUTCOME: failed`; an injected agent can omit it, so `complete` means "the agent claims success". Egress denials remain visible either way |
