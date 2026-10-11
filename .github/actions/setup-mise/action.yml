@@ -1,0 +1,18 @@
+name: Setup mise
+description: Install mise, the given tools from mise.toml, and export mise.toml's [env]
+
+inputs:
+  tools:
+    description: >-
+      Space-separated tools from mise.toml to install (e.g. "go" or "node"). Empty installs none,
+      for jobs that only need the [env] versions. Installing all would pull Claude Code and Codex.
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - uses: jdx/mise-action@v5
+      with:
+        install: ${{ inputs.tools != '' }}
+        install_args: ${{ inputs.tools }}
