@@ -28,6 +28,7 @@ import (
 	"terrarium/internal/credentials"
 	"terrarium/internal/session"
 	"terrarium/internal/store"
+	"terrarium/internal/testutil"
 )
 
 const (
@@ -41,7 +42,7 @@ func TestMain(m *testing.M) {
 	if !testing.Verbose() {
 		slog.SetDefault(slog.New(slog.DiscardHandler))
 	}
-	os.Exit(m.Run())
+	testutil.Main(m)
 }
 
 // fakeStore is an in-memory Store.
