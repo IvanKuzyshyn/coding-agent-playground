@@ -1,9 +1,7 @@
 # Terrarium: local prototype plan
 
-This plan replaces `docs/initial-design/02-terrarium-build-plan.md` for the current scope. It keeps
-the principles of `01-reference-architecture-simplified.md` §9 and re-targets the build at the
-requirements in `docs/initial-requirements/requirements.txt`: engineer-driven remote sessions with
-Claude Code and Codex on subscription auth, on one machine.
+This plan targets engineer-driven remote sessions with Claude Code and Codex on subscription auth,
+on one machine.
 
 ## 0. Scope and decisions
 
@@ -362,7 +360,7 @@ host keychain or password manager at `mise run up`.
 
 ### 6.2 sandboxd API
 
-Same as `02-terrarium-build-plan.md` §2.6: `/healthz`, `PUT|GET /files`, `POST /commands`
+`/healthz`, `PUT|GET /files`, `POST /commands`
 (idempotent by `id`), `GET /commands/{id}`, `GET /commands/{id}/logs?offset=N`,
 `POST /commands/{id}/signal`. Per-sandbox token in a header; reachable only on `sandbox-net`.
 

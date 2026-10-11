@@ -9,7 +9,6 @@ sends follow-up prompts, attaches to the live stream and stops them, over an HTT
 web UI. Sessions run on the engineer's Claude Max / ChatGPT Plus subscription, and the
 real credentials never enter a sandbox.
 
-- Requirements: `docs/initial-requirements/requirements.txt`
 - Plan and architecture: `docs/plan/local-prototype-plan.md`
 - Threat model (demonstrated vs design-only controls): `docs/threat-model.md`
 - Contracts: `docs/contracts/` (API, sandboxd, gateway)
