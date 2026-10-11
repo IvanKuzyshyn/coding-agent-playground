@@ -108,6 +108,14 @@ func TestGuardScansOnlyNewToolOutput(t *testing.T) {
 	}})
 	g.Expect(scanInference(session.HarnessClaude, b)).To(BeEmpty(), "claude older tool result")
 
+	// Claude Code sends system messages after the tool results (seen against the real API).
+	b, _ = json.Marshal(map[string]any{"messages": []any{
+		map[string]any{"role": "assistant", "content": []any{map[string]any{"type": "tool_use", "id": "t1"}}},
+		map[string]any{"role": "user", "content": []any{map[string]any{"type": "tool_result", "content": payload}}},
+		map[string]any{"role": "system", "content": []any{map[string]any{"type": "text", "text": "<total_tokens>1 tokens left</total_tokens>"}}},
+	}})
+	g.Expect(rules(scanInference(session.HarnessClaude, b))).To(Equal([]string{"override"}), "claude trailing system message")
+
 	b, _ = json.Marshal(map[string]any{"input": []any{
 		map[string]any{"type": "function_call_output", "output": payload},
 		map[string]any{"type": "message", "role": "assistant", "content": []any{map[string]any{"type": "output_text", "text": "done"}}},

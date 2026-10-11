@@ -56,7 +56,8 @@ Count = uncached input + cache writes + output. Usage parsing must never block o
 
 **Injection guard:** on priced routes (`/anthropic/v1/messages`, `/openai/responses`), when
 `spec.guard` is `monitor` or `block`, scan the tool output that is new in this request: Claude's
-`tool_result` blocks in the last message when it is a `user` message, Codex's trailing
+`tool_result` blocks after the last `assistant` message (Claude Code appends `system` messages
+after them), Codex's trailing
 `*_call_output` input items. Earlier history was scanned when it was new. Normalize (lowercase,
 drop Unicode format characters, collapse whitespace) and match the rules in
 `internal/gateway/guard.go` (`override`, `prompt_leak`, `mode_switch`, `chat_markup`,

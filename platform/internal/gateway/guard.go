@@ -49,7 +49,8 @@ func scanInference(harness string, body []byte) []guardHit {
 }
 
 // newToolOutput extracts the tool results the harness is sending for the first time: Claude's
-// tool_result blocks in the last (user) message, Codex's trailing *_call_output input items.
+// tool_result blocks after the last assistant message (Claude Code appends system messages after
+// them), Codex's trailing *_call_output input items.
 func newToolOutput(harness string, body []byte) string {
 	var sb strings.Builder
 	if harness == session.HarnessClaude {
@@ -59,20 +60,21 @@ func newToolOutput(harness string, body []byte) string {
 				Content json.RawMessage `json:"content"`
 			} `json:"messages"`
 		}
-		if json.Unmarshal(body, &req) != nil || len(req.Messages) == 0 {
+		if json.Unmarshal(body, &req) != nil {
 			return ""
 		}
-		last := req.Messages[len(req.Messages)-1]
-		var blocks []struct {
-			Type    string `json:"type"`
-			Content any    `json:"content"`
-		}
-		if last.Role != "user" || json.Unmarshal(last.Content, &blocks) != nil {
-			return ""
-		}
-		for _, b := range blocks {
-			if b.Type == "tool_result" {
-				collectText(&sb, b.Content)
+		for i := len(req.Messages) - 1; i >= 0 && req.Messages[i].Role != "assistant"; i-- {
+			var blocks []struct {
+				Type    string `json:"type"`
+				Content any    `json:"content"`
+			}
+			if req.Messages[i].Role != "user" || json.Unmarshal(req.Messages[i].Content, &blocks) != nil {
+				continue
+			}
+			for _, b := range blocks {
+				if b.Type == "tool_result" {
+					collectText(&sb, b.Content)
+				}
 			}
 		}
 		return sb.String()
