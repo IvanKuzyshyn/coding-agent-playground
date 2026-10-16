@@ -21,6 +21,7 @@ export default async function McpPage() {
   const url = `${PUBLIC_API_URL}/mcp`;
   const claude = `claude mcp add --transport http --scope user terrarium ${url} \\\n  --header "Authorization: Bearer ${TOKEN_MASK}"`;
   const codex = `export TERRARIUM_TOKEN=${TOKEN_MASK}\ncodex mcp add terrarium --url ${url} \\\n  --bearer-token-env-var TERRARIUM_TOKEN`;
+  const pi = `export TERRARIUM_TOKEN=${TOKEN_MASK}\npi mcp add terrarium --url ${url} \\\n  --bearer-token-env-var TERRARIUM_TOKEN`;
   const json = JSON.stringify(
     { mcpServers: { terrarium: { type: "http", url, headers: { Authorization: `Bearer ${TOKEN_MASK}` } } } },
     null,
@@ -54,6 +55,12 @@ export default async function McpPage() {
           <CopyBlock label="Codex command" text={codex} withToken />
           <p className="text-xs text-muted">
             Codex reads the token from TERRARIUM_TOKEN when it starts; keep the export in your shell profile.
+          </p>
+          <h3 className="pt-2 text-xs font-medium tracking-widest text-muted uppercase">Pi</h3>
+          <CopyBlock label="Pi command" text={pi} withToken />
+          <p className="text-xs text-muted">
+            Pi reads the token from TERRARIUM_TOKEN when it starts; keep the export in your shell profile.
+            Configuration is saved to ~/.pi/agent/mcp.json. Run /reload in an existing Pi session after adding it.
           </p>
           <h3 className="pt-2 text-xs font-medium tracking-widest text-muted uppercase">Other clients (JSON)</h3>
           <CopyBlock label="JSON config" text={json} withToken />
