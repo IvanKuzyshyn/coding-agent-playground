@@ -1,7 +1,29 @@
 # Terrarium
 
-> **For learning and demos only.** This version makes deliberate trade-offs to stay simple to run on
-> a local machine, and is not meant for production use.
+## About
+
+Terrarium is a learning example for understanding how to build a remote coding-agent platform.
+Its purpose is to make the essential building blocks and their trade-offs concrete:
+
+- **Isolated sandboxes:** run agents in disposable Docker environments with controlled network access.
+- **Agentic gateway:** keep real credentials outside sandboxes while managing access to model providers
+  and allowed external services.
+- **Sandbox lifecycle management:** provision and monitor sessions, recover from failures, enforce
+  timeouts, and clean up resources.
+- **Multi-harness support:** run Claude Code and Codex through a shared platform with harness-specific
+  adapters.
+- **Session orchestration and interaction:** coordinate agent runs and follow-up prompts through an
+  HTTP API, MCP, and a web UI.
+
+> **For learning and demos only—not for production deployment.** This project deliberately makes
+> trade-offs to stay understandable and simple to run on a local machine. Use it to explore the
+> design, not as a production-ready platform.
+
+The research behind this project was influenced by
+[OpenSandbox](https://github.com/opensandbox-group/OpenSandbox),
+[Google AX](https://github.com/google/ax), and [Omnigent](https://github.com/omnigent-ai/omnigent).
+
+## Architecture
 
 A single-machine prototype of an internal platform for remote coding-agent sessions. An engineer
 starts Claude Code or Codex sessions in isolated, disposable Docker sandboxes, then monitors them,
