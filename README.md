@@ -19,7 +19,9 @@ Its purpose is to make the essential building blocks and their trade-offs concre
 > trade-offs to stay understandable and simple to run on a local machine. Use it to explore the
 > design, not as a production-ready platform.
 
-The research behind this project was influenced by OpenSandbox, Google AX, and Omnigent.
+The research behind this project was influenced by
+[OpenSandbox](https://github.com/opensandbox-group/OpenSandbox),
+[Google AX](https://github.com/google/ax), and [Omnigent](https://github.com/omnigent-ai/omnigent).
 
 ## Architecture
 
